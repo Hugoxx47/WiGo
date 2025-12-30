@@ -12,6 +12,7 @@ Mettre le fichier **CMU-1.svs** dans le dossier **backend**
 **Lancer le serveur**
 - Entrer dans le dossier backend dans le terminal : **cd backend**
 - Taper : uvicorn main:app --reload
+  
 **Envoyer les tuiles et patientez le temps que ça se termine**
 - Taper : python convert_wsi.py
 
