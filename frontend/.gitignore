@@ -22,3 +22,14 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+.venv/
+backend/.venv/
+__pycache__/
+*.svs
+*.tiff
+backend/vips/
+backend/openslide_bin/
+*_files/
+*.dzi
+node_modules/

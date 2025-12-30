@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import OpenSeadragon from 'openseadragon';
-import { Box, AppBar, Toolbar, Typography, IconButton, CircularProgress } from '@mui/material';
+import { Box, AppBar, Toolbar, Typography, IconButton } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useNavigate } from 'react-router-dom';
 
@@ -9,32 +9,30 @@ export default function Viewer() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Éviter le double chargement en React 18
     if (viewerRef.current) return;
 
     const osd = OpenSeadragon({
       id: "osd-viewer",
-      prefixUrl: "https://openseadragon.github.io/openseadragon/images/", // Icônes (zoom, home...)
+      prefixUrl: "https://openseadragon.github.io/openseadragon/images/",
       tileSources: {
         Image: {
           xmlns: "http://schemas.microsoft.com/deepzoom/2008",
-          // L'URL vers le dossier "_files" dans MinIO
+          // ⚠️ Vérifie que ce chemin correspond EXACTEMENT à ton dossier MinIO
           Url: "http://localhost:9000/biopsies/biopsie_cmu_1_files/", 
           Format: "jpg",
-          Overlap: "1",      // Doit correspondre à ton script Python (overlap=1)
-          TileSize: "256",   // Doit correspondre à ton script Python (tile_size=256)
+          Overlap: "1",
+          TileSize: "256",
           Size: {
-            Height: "32914", // ⚠️ Chiffres exacts de ton log Python
+            // Ces dimensions doivent correspondre à ce que le script Python a affiché
+            // Pour CMU-1.svs, c'est généralement :
+            Height: "32914", 
             Width: "46000"
           }
         }
       },
-      showNavigator: true,    // Affiche la mini-carte en haut à droite
+      showNavigator: true,
       wrapHorizontal: false,
-      animationTime: 0.5,
-      blendTime: 0.1,
-      constrainDuringPan: true,
-      maxZoomPixelRatio: 2,
+      debugMode: false, // Mets à 'true' si tu veux voir les cases rouges de debug
     });
 
     viewerRef.current = osd;
@@ -60,13 +58,8 @@ export default function Viewer() {
         </Toolbar>
       </AppBar>
       
-      {/* Zone du Viewer */}
+      {/* C'est ici que l'image doit s'afficher */}
       <div id="osd-viewer" style={{ flexGrow: 1, width: '100%', height: '100%' }} />
-      
-      {/* Légende ou info bulle (Optionnel) */}
-      <Box sx={{ position: 'absolute', bottom: 20, right: 20, bgcolor: 'rgba(255,255,255,0.8)', p: 1, borderRadius: 1 }}>
-        <Typography variant="caption">Source: CMU-1.svs | WSI High Res</Typography>
-      </Box>
     </Box>
   );
 }
