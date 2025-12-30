@@ -27,3 +27,21 @@ export const getPatients = async (): Promise<Patient[]> => {
     return [];
   }
 };
+
+export interface AIResult {
+  cancer_detected: boolean;
+  confidence: number;
+  cells_count: number;
+  regions_found: number;
+}
+
+// Fonction pour lancer l'analyse
+export const analyzeBiopsy = async (id: number): Promise<AIResult | null> => {
+  try {
+    const response = await axios.post(`${API_URL}/biopsies/${id}/analyze`);
+    return response.data;
+  } catch (error) {
+    console.error("Erreur analyse IA", error);
+    return null;
+  }
+};

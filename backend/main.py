@@ -7,6 +7,8 @@ from pydantic import BaseModel
 # Imports de nos fichiers
 import models
 import database
+import time
+import random
 
 # Création automatique des tables dans la BDD
 models.Base.metadata.create_all(bind=database.engine)
@@ -40,6 +42,12 @@ class PatientSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+class AIResult(BaseModel):
+    cancer_detected: bool
+    confidence: float
+    cells_count: int
+    regions_found: int
 
 # --- ROUTES API ---
 
@@ -89,3 +97,30 @@ def get_patient(patient_id: int, db: Session = Depends(database.get_db)):
     if patient is None:
         raise HTTPException(status_code=404, detail="Patient introuvable")
     return patient
+
+# 4. Analyse IA
+@app.post("/biopsies/{biopsy_id}/analyze", response_model=AIResult)
+def analyze_biopsy(biopsy_id: int, db: Session = Depends(database.get_db)):
+    # 1. Vérifier que la biopsie existe
+    biopsy = db.query(models.Biopsy).filter(models.Biopsy.id == biopsy_id).first()
+    if not biopsy:
+        raise HTTPException(status_code=404, detail="Biopsie introuvable")
+
+    # 2. Simuler un traitement lourd (L'IA réfléchit...)
+    time.sleep(3) 
+
+    # 3. Générer des résultats aléatoires (Simulation)
+    has_cancer = random.choice([True, False])
+    confidence = round(random.uniform(0.85, 0.99), 2)
+    cells = random.randint(1000, 5000)
+    
+    # 4. Mettre à jour la base de données
+    biopsy.status = "Validé" if not has_cancer else "À vérifier"
+    db.commit()
+
+    return {
+        "cancer_detected": has_cancer,
+        "confidence": confidence,
+        "cells_count": cells,
+        "regions_found": random.randint(3, 15)
+    }
