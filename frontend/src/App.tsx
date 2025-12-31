@@ -1,22 +1,29 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Viewer from './pages/Viewer';
-import './App.css';
+import Login from './pages/Login';
+
+// Pour la démo, on simule que l'utilisateur est connecté
+const isAuthenticated = true;
 
 function App() {
   return (
-    <Router>
-      <Routes>
-        {/* Route par défaut : Redirige vers le login */}
-        <Route path="/" element={<Navigate to="/login" replace />} />
-        
-        {/* Nos pages */}
-        <Route path="/login" element={<Login />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/viewer" element={<Viewer />} />
-      </Routes>
-    </Router>
+    <div className="bg-slate-900 min-h-screen text-white font-sans antialiased selection:bg-cyan-500 selection:text-white">
+      <Router>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route 
+            path="/dashboard" 
+            element={isAuthenticated ? <Dashboard /> : <Navigate to="/login" />} 
+          />
+          <Route 
+            path="/viewer" 
+            element={isAuthenticated ? <Viewer /> : <Navigate to="/login" />} 
+          />
+          <Route path="*" element={<Navigate to="/dashboard" />} />
+        </Routes>
+      </Router>
+    </div>
   );
 }
 
