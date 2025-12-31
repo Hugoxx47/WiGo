@@ -14,9 +14,7 @@ const StatCard = ({ title, value, icon: Icon, color }: any) => (
       <p className="text-slate-400 text-sm font-medium mb-1">{title}</p>
       <h3 className="text-2xl font-bold text-white">{value}</h3>
     </div>
-    <div className={`p-3 rounded-xl ${color} bg-opacity-10`}>
-      <Icon className={color.replace('bg-', 'text-')} />
-    </div>
+    <div className={`p-3 rounded-xl ${color} bg-opacity-10`}><Icon className={color.replace('bg-', 'text-')} /></div>
   </div>
 );
 
@@ -69,15 +67,11 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-10 relative overflow-hidden">
       <div className="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-slate-900 to-transparent -z-10"></div>
-
-      <div className="max-w-7xl mx-auto z-10 relative">
-        
+      <div className="max-w-7xl mx-auto z-10 relative">        
         {/* En-tête Dynamique */}
         <header className="flex justify-between items-center mb-12">
           <div>
-            <h1 className="text-4xl font-extrabold text-white tracking-tight">
-              Tableau de Bord
-            </h1>
+            <h1 className="text-4xl font-extrabold text-white tracking-tight">Tableau de Bord</h1>
             <p className="text-slate-400 mt-2">Bienvenue, {username}</p>
           </div>
           <div className="flex items-center gap-4">
@@ -121,10 +115,7 @@ export default function Dashboard() {
           />
         </div>
 
-        <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-            <FolderSharedIcon className="text-slate-500" />
-            Dossiers Récents
-        </h2>
+        <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2"><FolderSharedIcon className="text-slate-500" />Dossiers Récents</h2>
 
         {/* Grille des patients */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -137,9 +128,7 @@ export default function Dashboard() {
                         <h3 className="text-lg font-bold text-white group-hover:text-cyan-400 transition-colors">{patient.name}</h3>
                         <p className="text-slate-500 text-sm">Dossier #{patient.folder_id}</p>
                     </div>
-                    <span className="bg-slate-800 text-slate-300 px-3 py-1 rounded-full text-xs font-mono">
-                        {patient.age} ans
-                    </span>
+                    <span className="bg-slate-800 text-slate-300 px-3 py-1 rounded-full text-xs font-mono">{patient.age} ans</span>
                  </div>
 
                  <div className="flex items-center gap-3 mb-6">
