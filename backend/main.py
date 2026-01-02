@@ -63,27 +63,34 @@ def read_root():
 
 @app.post("/seed")
 def seed_database(db: Session = Depends(database.get_db)):
-    if db.query(models.Patient).count() > 0:
-        return {"message": "La base contient déjà des données."}
-
-    patient1 = models.Patient(name="Jean Dupont", age=65, folder_id="CMU-1")
-    db.add(patient1)
+    # Nettoyage complet
+    db.query(models.Biopsy).delete()
+    db.query(models.Patient).delete()
     db.commit()
-    db.refresh(patient1)
 
-    # Attention : L'URL ici doit être accessible depuis ton navigateur (localhost)
-    biopsy1 = models.Biopsy(
-        patient_id=patient1.id, 
-        image_url="http://localhost:9000/biopsies/biopsie_cmu_1_files/",
-        status="En cours d'analyse"
-    )
-    db.add(biopsy1)
+    # LISTE RÉDUITE À 4 PATIENTS
+    patients_data = [
+        {"name": "Jean Dupont", "age": 65, "folder": "CMU-1"},
+        {"name": "Marie Curie", "age": 58, "folder": "CASE-2"},
+        {"name": "Thomas Anderson", "age": 35, "folder": "MATRIX-3"},
+        {"name": "Sarah Connor", "age": 42, "folder": "SKY-4"},
+    ]
 
-    patient2 = models.Patient(name="Marie Curie", age=58, folder_id="CASE-2")
-    db.add(patient2)
+    for p in patients_data:
+        patient = models.Patient(name=p["name"], age=p["age"], folder_id=p["folder"])
+        db.add(patient)
+        db.commit()
+        db.refresh(patient)
+
+        biopsy = models.Biopsy(
+            patient_id=patient.id, 
+            image_url="http://localhost:9000/biopsies/biopsie_cmu_1_files/",
+            status="Non analysé" 
+        )
+        db.add(biopsy)
     
     db.commit()
-    return {"message": "✅ Données de test injectées !"}
+    return {"message": "✅ Base prête : 4 patients injectés !"}
 
 @app.get("/patients", response_model=List[PatientSchema])
 def get_patients(db: Session = Depends(database.get_db)):
