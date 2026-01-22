@@ -84,7 +84,7 @@ def seed_database(db: Session = Depends(database.get_db)):
 
         biopsy = models.Biopsy(
             patient_id=patient.id, 
-            image_url="http://localhost:9000/biopsies/biopsie_cmu_1_files/",
+            image_url="http://localhost:9000/biopsies/biopsie_cmu_1_files/preview.jpg",
             status="Non analysé" 
         )
         db.add(biopsy)

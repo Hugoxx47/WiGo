@@ -4,14 +4,12 @@ import MedicalServicesIcon from '@mui/icons-material/MedicalServices';
 
 export default function Login() {
   const navigate = useNavigate();
-  // État pour stocker ce que l'utilisateur tape
   const [username, setUsername] = useState("Dr. House");
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     // 1. On sauvegarde le nom dans la mémoire du navigateur (LocalStorage)
     localStorage.setItem("biopsie_user", username);
-    // 2. On redirige
     navigate('/dashboard');
   };
 
@@ -20,7 +18,7 @@ export default function Login() {
       <div className="relative w-full max-w-md p-8 bg-slate-800/50 backdrop-blur-xl border border-slate-700 rounded-2xl shadow-2xl">
         <div className="flex flex-col items-center mb-8">
           <div className="p-4 bg-cyan-500/10 rounded-full mb-4 animate-pulse"><MedicalServicesIcon className="text-cyan-400" style={{ fontSize: 40 }} /></div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">Bio-IA Portal</h1>
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">Portail Médecin</h1>
           <p className="text-slate-400 text-sm mt-2">Identification sécurisée</p>
         </div>
         <form onSubmit={handleLogin} className="space-y-6">
@@ -29,7 +27,7 @@ export default function Login() {
             <input 
               type="text" 
               value={username}
-              onChange={(e) => setUsername(e.target.value)} // On met à jour l'état quand tu tapes
+              onChange={(e) => setUsername(e.target.value)}
               className="w-full bg-slate-900/50 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
             />
           </div>          
