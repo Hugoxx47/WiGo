@@ -21,7 +21,7 @@ import DrawIcon from '@mui/icons-material/Draw';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 
 import { analyzeBiopsy, type AIResult } from '../services/api';
-
+// @ts-ignore
 import cornerstone from 'cornerstone-core';
 // @ts-ignore
 import cornerstoneTools from 'cornerstone-tools';
@@ -29,6 +29,7 @@ import cornerstoneTools from 'cornerstone-tools';
 import cornerstoneMath from 'cornerstone-math';
 // @ts-ignore
 import cornerstoneWebImageLoader from 'cornerstone-web-image-loader';
+// @ts-ignore
 import Hammer from 'hammerjs';
 
 cornerstoneTools.external.cornerstone = cornerstone;
