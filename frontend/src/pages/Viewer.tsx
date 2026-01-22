@@ -15,14 +15,13 @@ import StraightenIcon from '@mui/icons-material/Straighten';
 import CropSquareIcon from '@mui/icons-material/CropSquare';
 import ArrowOutwardIcon from '@mui/icons-material/ArrowOutward';
 import LoupeIcon from '@mui/icons-material/Loupe';
-import DeleteForeverIcon from '@mui/icons-material/DeleteForever'; // Poubelle (Sélection)
-import DeleteSweepIcon from '@mui/icons-material/DeleteSweep'; // Balai (Tout effacer)
+import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import DrawIcon from '@mui/icons-material/Draw'; 
-import RestartAltIcon from '@mui/icons-material/RestartAlt'; // Reset Vue
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
 
 import { analyzeBiopsy, type AIResult } from '../services/api';
 
-// @ts-ignore
 import cornerstone from 'cornerstone-core';
 // @ts-ignore
 import cornerstoneTools from 'cornerstone-tools';
@@ -30,7 +29,6 @@ import cornerstoneTools from 'cornerstone-tools';
 import cornerstoneMath from 'cornerstone-math';
 // @ts-ignore
 import cornerstoneWebImageLoader from 'cornerstone-web-image-loader';
-// @ts-ignore
 import Hammer from 'hammerjs';
 
 cornerstoneTools.external.cornerstone = cornerstone;
