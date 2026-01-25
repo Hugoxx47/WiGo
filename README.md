@@ -1,53 +1,89 @@
-# 🔬 Projet 6 : Détection de Pathologies par IA (POC)
+# 🔬 Projet 6 : Détection de Pathologies par IA
 
-Ce projet est une preuve de concept (POC) d'une application web permettant aux pathologistes de visualiser des biopsies géantes (WSI - Whole Slide Images) et de lancer une analyse prédictive par Intelligence Artificielle.
-
-## 🚀 Fonctionnalités
-
-* **Dashboard Oncologue** : Liste des patients et statut des analyses.
-* **Visualiseur Haute Résolution** : Visualisation fluide d'images médicales (plusieurs giga-octets) grâce au tuilage (Deep Zoom).
-* **IA Prédictive** : Simulation d'un moteur IA détectant la présence de cellules cancéreuses.
-* **Architecture Micro-services** : Application entièrement conteneurisée avec Docker.
-
-## 🛠️ Stack Technique
-
-* **Frontend** : React, TypeScript, Vite, Material UI, OpenSeadragon.
-* **Backend** : Python, FastAPI, SQLAlchemy, Pydantic.
-* **Base de données** : PostgreSQL.
-* **Stockage Object (S3)** : MinIO (pour les tuiles d'images).
-* **Infrastructure** : Docker & Docker Compose.
+Application web d'aide au diagnostic permettant aux pathologistes de visualiser des biopsies géantes (WSI) et de simuler une analyse IA.
 
 ## 📋 Prérequis
 
-* [Docker Desktop](https://www.docker.com/products/docker-desktop/) installé et lancé.
-* Un fichier de biopsie `.svs` (ex: `CMU-1.svs`) placé dans le dossier `backend/`.
+1.  **Docker Desktop** doit être installé et lancé.
+2.  Le fichier de biopsie **`CMU-1.svs`** (téléchargeable sur OpenSlide).
 
-## ⚙️ Installation et Lancement
+---
 
-### 1. Cloner le projet
-```bash
-git clone [https://github.com/ton-pseudo/Projet6.git](https://github.com/ton-pseudo/Projet6.git)
-cd Projet6
-```
+## ⚙️ Installation Rapide (3 minutes)
 
-Mettre le fichier **CMU-1.svs** dans le dossier **backend**
-**Activer son environnement virtuel**
-- Taper : py -3.11 -m venv .venv
-- .\.venv\Scripts\Activate
-- Faire CTRL+SHIFT+P
-- Taper sélectionner un interpréteur
-- Choisir le .venv ou si pas afficher cliquer sur entrer le chemin de l'interpréteur... --> Rechercher... --> suivre ce chemin backend\.venv\Scripts --> prendre le python.exe
+### 1. Préparation du fichier
+Place le fichier **`CMU-1.svs`** directement dans le dossier :
+`Projet6/backend/`
 
-**A l'intérieur de l'environnement, on installe les dépendances (faire attention à bien être dans le (.venv) PS)**
-- Taper : python -m pip install fastapi "uvicorn[standard]" sqlalchemy psycopg2-binary minio pyvips pydantic
+*(C'est indispensable pour que le convertisseur le trouve)*.
 
-**Lancer le serveur**
-- Entrer dans le dossier backend dans le terminal : **cd backend**
-- Taper : uvicorn main:app --reload
-  
-**Envoyer les tuiles et patientez le temps que ça se termine**
-- Taper : python convert_wsi.py
+### 2. Démarrage de l'infrastructure
+Ouvre un terminal (PowerShell ou VS Code) à la racine du projet et lance :
 
-**Login et password pour Minio et Orthanc**
-- Login **minioadmin** Password **minioadmin**
-- Login **orthanc** Password **orthanc**
+`docker-compose up -d --build`
+
+*Attends que tous les conteneurs (frontend, backend, postgres, orthanc) soient verts (environ 1-2 minutes la première fois).*
+
+### 3. Conversion de l'image (Une seule fois)
+Cette étape transforme le fichier .svs en format médical DICOM et l'envoie dans le serveur Orthanc.
+
+`docker exec p6_backend python -u convert_wsi.py`
+
+*Attends de voir le message : 🎉 SUCCÈS ! Image HD envoyée à Orthanc.*
+
+### 4. Création des patients (Seed)
+Cette étape remplit la base de données avec les patients fictifs (Jean Dupont, etc.) et lie l'image.
+
+`Invoke-RestMethod -Method POST -Uri "http://localhost:8000/seed"`
+
+*(Si cette commande échoue sur ton PC, va simplement sur https://www.google.com/search?q=http://localhost:8000/docs, cherche POST /seed et clique sur "Execute").*
+
+---
+
+## 🖥️ Accès à l'application
+Site Web (Dashboard) : http://localhost:5173
+
+Serveur PACS (Orthanc) : http://localhost:8042
+
+Login : orthanc
+
+Password : orthanc
+
+Dans Orthanc cliquer sur Lookup en haut à gauche puis sur Do lookup et cliquer sur Jean Dupont avancer dans les onglets jusqu'à arriver sur DICOM Tags et cliquer sur Preview the instance en bas à gauche pour voir l'image.
+
+API Documentation (Swagger) : http://localhost:8000/docs
+
+---
+
+## 🛠️ Commandes Utiles
+#### Éteindre l'application
+Pour arrêter les serveurs sans rien effacer :
+
+`docker-compose stop`
+
+#### Tout nettoyer (Reset complet)
+
+Si l'application bug ou si tu veux repartir de zéro (efface la base de données et les images) :
+
+`docker-compose down -v`
+
+Ensuite, il faut relancer l'installation depuis l'étape 2.
+
+#### Voir les logs (en cas de problème)
+
+Pour voir ce qui se passe dans le backend :
+
+`docker logs -f p6_backend`
+
+---
+
+## 🏗️ Architecture Technique
+L'application tourne entièrement dans des conteneurs Docker isolés :
+
+Frontend (Port 5173) : React + Vite + CornerstoneJS (Visualiseur médical).
+
+Backend (Port 8000) : Python FastAPI. Gère la logique et la conversion d'images.
+
+PostgreSQL (Port 5432) : Base de données des patients et des analyses.
+
+Orthanc (Port 8042) : Serveur PACS standard pour le stockage des images médicales DICOM.
