@@ -1,6 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
-/* eslint-disable @typescript-eslint/ban-ts-comment */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
@@ -9,7 +7,7 @@ import MicOffIcon from '@mui/icons-material/MicOff';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import { jsPDF } from "jspdf";
 
-// --- ICÔNES ---
+// --- ICONS ---
 import PanToolIcon from '@mui/icons-material/PanTool';
 import StraightenIcon from '@mui/icons-material/Straighten';
 import CropSquareIcon from '@mui/icons-material/CropSquare';
@@ -21,21 +19,31 @@ import DrawIcon from '@mui/icons-material/Draw';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 
 import { analyzeBiopsy, type AIResult } from '../services/api';
-// @ts-ignore
-import cornerstone from 'cornerstone-core';
-// @ts-ignore
-import cornerstoneTools from 'cornerstone-tools';
-// @ts-ignore
-import cornerstoneMath from 'cornerstone-math';
-// @ts-ignore
-import cornerstoneWebImageLoader from 'cornerstone-web-image-loader';
-// @ts-ignore
-import Hammer from 'hammerjs';
 
+// --- IMPORTS ---
+import cornerstone from 'cornerstone-core';
+import cornerstoneTools from 'cornerstone-tools';
+import cornerstoneMath from 'cornerstone-math';
+import Hammer from 'hammerjs';
+import cornerstoneWADOImageLoader from 'cornerstone-wado-image-loader';
+import dicomParser from 'dicom-parser';
+
+// --- CONFIGURATION ---
 cornerstoneTools.external.cornerstone = cornerstone;
 cornerstoneTools.external.Hammer = Hammer;
 cornerstoneTools.external.cornerstoneMath = cornerstoneMath;
-cornerstoneWebImageLoader.external.cornerstone = cornerstone;
+
+cornerstoneWADOImageLoader.external.cornerstone = cornerstone;
+cornerstoneWADOImageLoader.external.dicomParser = dicomParser;
+
+// WebWorker
+cornerstoneWADOImageLoader.webWorkerManager.initialize({
+    maxWebWorkers: navigator.hardwareConcurrency || 1,
+    startWebWorkersOnDemand: true,
+    taskConfiguration: {
+        decodeTask: { initializeCodecsOnStartup: false },
+    },
+});
 
 export default function Viewer() {
   const elementRef = useRef<HTMLDivElement>(null);
@@ -55,111 +63,103 @@ export default function Viewer() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
 
-  const saveAnnotations = () => {
+  const saveAnnotations = useCallback(() => {
+    if (!biopsyId) return;
     const toolState = cornerstoneTools.globalImageIdSpecificToolStateManager.saveToolState();
     localStorage.setItem(`annotations_${biopsyId}`, JSON.stringify(toolState));
-  };
+  }, [biopsyId]);
 
-  const loadAnnotations = () => {
+  const loadAnnotations = useCallback(() => {
+    if (!biopsyId) return;
     cornerstoneTools.globalImageIdSpecificToolStateManager.restoreToolState({});
     const savedState = localStorage.getItem(`annotations_${biopsyId}`);
     if (savedState) {
         const toolState = JSON.parse(savedState);
         cornerstoneTools.globalImageIdSpecificToolStateManager.restoreToolState(toolState);
     }
-    if (elementRef.current) cornerstone.updateImage(elementRef.current);
-  };
+  }, [biopsyId]);
 
   useEffect(() => {
-    if (!elementRef.current || !biopsyId) return;
+    if (!elementRef.current) return;
 
-    cornerstone.registerImageLoader('http', cornerstoneWebImageLoader.loadImage);
-    cornerstone.registerImageLoader('https', cornerstoneWebImageLoader.loadImage);
+    try { cornerstone.enable(elementRef.current); } catch { /* empty */ }
 
-    try { cornerstone.enable(elementRef.current); } catch (e) { /* empty */ }
-
-    cornerstoneTools.init({
-        showSVGCursors: true,
-        globalToolSyncEnabled: true, 
-    });
-
+    // Init tools
+    cornerstoneTools.init({ showSVGCursors: true, globalToolSyncEnabled: true });
     cornerstoneTools.toolColors.setToolColor("rgb(6, 182, 212)"); 
     cornerstoneTools.toolColors.setActiveColor("rgb(255, 200, 0)"); 
     cornerstoneTools.toolStyle.setToolWidth(3);
 
-    const imageId = `http://localhost:9000/biopsies/biopsie_cmu_1_files/preview.jpg?id=${biopsyId}`;
+    const loadOrthancImage = async () => {
+        try {
+            const response = await fetch('/orthanc/instances');
+            
+            if (!response.ok) throw new Error("Erreur réseau Orthanc");
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    cornerstone.loadImage(imageId).then((image: any) => {
-      if (!elementRef.current) return;
+            const instances = await response.json();
 
-      image.rowPixelSpacing = undefined;
-      image.columnPixelSpacing = undefined;
-
-      cornerstone.displayImage(elementRef.current, image);
-
-      const tools = [
-          cornerstoneTools.PanTool,
-          cornerstoneTools.ZoomTool,
-          cornerstoneTools.LengthTool,
-          cornerstoneTools.RectangleRoiTool,
-          cornerstoneTools.ArrowAnnotateTool,
-          cornerstoneTools.FreehandRoiTool, 
-          cornerstoneTools.ZoomMouseWheelTool
-      ];
-      
-      cornerstoneTools.addTool(cornerstoneTools.MagnifyTool, {
-          magnifySize: 350,
-          magnificationLevel: 4,
-      });
-
-      tools.forEach(tool => cornerstoneTools.addTool(tool));
-
-      cornerstoneTools.setToolActive('Pan', { mouseButtonMask: 1 });
-      cornerstoneTools.setToolActive('ZoomMouseWheel', {});
-
-      loadAnnotations();
-
-    }).catch((err: unknown) => {
-      console.error(err);
-      alert("Erreur chargement image.");
-    });
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.lang = 'fr-FR';
-        recognition.interimResults = true;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        recognition.onresult = (event: any) => {
-            let finalTranscript = '';
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-                if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript + ' ';
+            if (instances.length === 0) {
+                alert("Orthanc est vide. Lancez le script Python !");
+                return;
             }
-            if (finalTranscript) setReportText(prev => prev + finalTranscript);
-        };
-        recognitionRef.current = recognition;
-    }
 
+            // Get last uploaded image
+            const instanceId = instances[instances.length - 1]; 
+            const imageId = `wadouri:${window.location.origin}/orthanc/instances/${instanceId}/file`;
+
+            cornerstone.loadImage(imageId).then((image: unknown) => {
+                if (!elementRef.current) return;
+                cornerstone.displayImage(elementRef.current, image);
+
+                // --- TOOLS ---
+                const tools = [
+                    cornerstoneTools.PanTool, cornerstoneTools.ZoomTool,
+                    cornerstoneTools.LengthTool, cornerstoneTools.RectangleRoiTool,
+                    cornerstoneTools.ArrowAnnotateTool, cornerstoneTools.FreehandRoiTool, 
+                    cornerstoneTools.ZoomMouseWheelTool
+                ];
+                
+                try { cornerstoneTools.addTool(cornerstoneTools.MagnifyTool, { magnifySize: 350, magnificationLevel: 4 }); } catch { /* */ }
+                tools.forEach(t => { try { cornerstoneTools.addTool(t); } catch { /* */ } });
+
+                cornerstoneTools.setToolActive('Pan', { mouseButtonMask: 1 });
+                cornerstoneTools.setToolActive('ZoomMouseWheel', {});
+
+                loadAnnotations();
+
+                setTimeout(() => {
+                    if (elementRef.current) {
+                        cornerstone.fitToWindow(elementRef.current);
+                        cornerstone.updateImage(elementRef.current); 
+                    }
+                }, 100); 
+
+            }).catch((err: unknown) => {
+                console.error("Erreur Cornerstone:", err);
+            });
+
+        } catch (error) {
+            console.error("Erreur connexion Orthanc:", error);
+            alert("Impossible de contacter Orthanc.");
+        }
+    };
+
+    loadOrthancImage();
+
+    const currentElement = elementRef.current;
     return () => {
       saveAnnotations();
-      if (elementRef.current) {
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-        try { cornerstone.disable(elementRef.current); } catch(e) { /* empty */ }
+      if (currentElement) {
+        try { cornerstone.disable(currentElement); } catch { /* empty */ }
       }
-      recognitionRef.current?.stop();
     };
   }, [biopsyId, loadAnnotations, saveAnnotations]);
 
-  // --- SUPPRIMER LA SÉLECTION (Poubelle Rouge) ---
+  // --- Handlers ---
   const deleteSelected = () => {
     if (!elementRef.current) return;
-    
     const toolsToCheck = ['Length', 'RectangleRoi', 'ArrowAnnotate', 'FreehandRoi'];
     let somethingDeleted = false;
-
     toolsToCheck.forEach(toolName => {
         const toolState = cornerstoneTools.getToolState(elementRef.current, toolName);
         if (toolState && toolState.data) {
@@ -171,7 +171,6 @@ export default function Viewer() {
             }
         }
     });
-
     if (somethingDeleted) {
         cornerstone.updateImage(elementRef.current);
         saveAnnotations();
@@ -180,25 +179,18 @@ export default function Viewer() {
     }
   };
 
-  // --- TOUT EFFACER (Balai) ---
   const clearAllAnnotations = () => {
     if (!elementRef.current) return;
-    
-    // Demande de confirmation pour éviter les accidents
-    if (window.confirm("Voulez-vous vraiment supprimer TOUTES les annotations ?")) {
-        // On vide l'état global des outils
+    if (window.confirm("Voulez-vous vraiment supprimer toutes les annotations ?")) {
         cornerstoneTools.globalImageIdSpecificToolStateManager.restoreToolState({});
         cornerstone.updateImage(elementRef.current);
-        saveAnnotations(); // On sauvegarde l'état vide
+        saveAnnotations();
     }
   };
 
-  // --- RESET VIEW (Réinitialiser Zoom/Position) ---
   const resetViewport = () => {
     if (!elementRef.current) return;
-    cornerstone.reset(elementRef.current);
-    const viewport = cornerstone.getViewport(elementRef.current);
-    cornerstone.setViewport(elementRef.current, viewport);
+    cornerstone.fitToWindow(elementRef.current);
     cornerstone.updateImage(elementRef.current);
   };
 
@@ -216,7 +208,7 @@ export default function Viewer() {
         setIsListening(false);
     } else {
         try { recognitionRef.current.start(); setIsListening(true); } 
-        catch (e) { setIsListening(false); }
+        catch { setIsListening(false); }
     }
   };
 
@@ -227,6 +219,7 @@ export default function Viewer() {
         const data = await analyzeBiopsy(biopsyId);
         if (data) setResult(data);
     } catch (error) {
+        console.error("Erreur analyse:", error);
         alert("Erreur analyse");
     } finally {
         setLoading(false);
@@ -259,12 +252,31 @@ export default function Viewer() {
     doc.save(`Rapport.pdf`);
   };
 
-  const getBtnClass = (toolName: string) => 
-    `p-2 rounded transition-colors ${activeTool === toolName ? "bg-cyan-600 text-white shadow-lg shadow-cyan-500/50" : "hover:bg-white/10 text-cyan-400"}`;
+  const getBtnClass = (toolName: string) =>`p-2 rounded transition-colors ${activeTool === toolName ? "bg-cyan-600 text-white shadow-lg shadow-cyan-500/50" : "hover:bg-white/10 text-cyan-400"}`;
+
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.lang = 'fr-FR';
+        recognition.interimResults = true;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        recognition.onresult = (event: any) => {
+            let finalTranscript = '';
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript + ' ';
+            }
+            if (finalTranscript) setReportText((prev: string) => prev + finalTranscript);
+        };
+        recognitionRef.current = recognition;
+    }
+    return () => { recognitionRef.current?.stop(); };
+  }, []);
 
   return (
     <div className="h-screen w-screen bg-black overflow-hidden relative font-sans text-white">
-      
       <div 
         ref={elementRef} 
         className="absolute inset-0 z-0 bg-black cursor-crosshair"
@@ -280,50 +292,18 @@ export default function Viewer() {
             </div>
             
             <div className="flex gap-1 ml-2 border-r border-white/10 pr-2">
-                <button onClick={() => switchTool('Pan')} className={getBtnClass('Pan')} title="Déplacer">
-                    <PanToolIcon />
-                </button>
-                <button onClick={() => switchTool('Magnify')} className={getBtnClass('Magnify')} title="Loupe">
-                    <LoupeIcon />
-                </button>
-                <button onClick={() => switchTool('Length')} className={getBtnClass('Length')} title="Mesurer">
-                    <StraightenIcon />
-                </button>
-                <button onClick={() => switchTool('RectangleRoi')} className={getBtnClass('RectangleRoi')} title="Zone">
-                    <CropSquareIcon />
-                </button>
-                <button onClick={() => switchTool('FreehandRoi')} className={getBtnClass('FreehandRoi')} title="Dessin libre">
-                    <DrawIcon />
-                </button>
-                <button onClick={() => switchTool('ArrowAnnotate')} className={getBtnClass('ArrowAnnotate')} title="Annoter">
-                    <ArrowOutwardIcon />
-                </button>
+                <button onClick={() => switchTool('Pan')} className={getBtnClass('Pan')} title="Déplacer"><PanToolIcon /></button>
+                <button onClick={() => switchTool('Magnify')} className={getBtnClass('Magnify')} title="Loupe"><LoupeIcon /></button>
+                <button onClick={() => switchTool('Length')} className={getBtnClass('Length')} title="Mesurer"><StraightenIcon /></button>
+                <button onClick={() => switchTool('RectangleRoi')} className={getBtnClass('RectangleRoi')} title="Zone"><CropSquareIcon /></button>
+                <button onClick={() => switchTool('FreehandRoi')} className={getBtnClass('FreehandRoi')} title="Dessin libre"><DrawIcon /></button>
+                <button onClick={() => switchTool('ArrowAnnotate')} className={getBtnClass('ArrowAnnotate')} title="Annoter"><ArrowOutwardIcon /></button>
             </div>
 
             <div className="flex gap-2 ml-2">
-                <button 
-                    onClick={resetViewport} 
-                    className="p-2 rounded bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white transition-all"
-                    title="Réinitialiser la vue (Zoom)"
-                >
-                    <RestartAltIcon />
-                </button>
-                
-                <button 
-                    onClick={deleteSelected} 
-                    className="p-2 rounded bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all border border-red-500/30"
-                    title="Supprimer la sélection"
-                >
-                    <DeleteForeverIcon />
-                </button>
-
-                <button 
-                    onClick={clearAllAnnotations} 
-                    className="p-2 rounded bg-red-600 text-white hover:bg-red-700 transition-all shadow-lg shadow-red-500/20"
-                    title="Tout effacer"
-                >
-                    <DeleteSweepIcon />
-                </button>
+                <button onClick={resetViewport} className="p-2 rounded bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white transition-all"><RestartAltIcon /></button>
+                <button onClick={deleteSelected} className="p-2 rounded bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all border border-red-500/30"><DeleteForeverIcon /></button>
+                <button onClick={clearAllAnnotations} className="p-2 rounded bg-red-600 text-white hover:bg-red-700 transition-all shadow-lg shadow-red-500/20"><DeleteSweepIcon /></button>
             </div>
          </div>
 

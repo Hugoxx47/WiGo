@@ -1,11 +1,13 @@
+version: '3.8'
+
 services:
-  # --- 1. Base de Données (Nom du service : db) ---
-  db:
+  # --- Database ---
+  postgres:
     image: postgres:15
     container_name: p6_postgres
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: password_secure
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
       POSTGRES_DB: biopsie_db
     ports:
       - "5432:5432"
@@ -14,60 +16,84 @@ services:
     networks:
       - app_network
 
-  # --- 2. Stockage Images (Nom du service : minio) ---
+  # --- File Storage (MinIO) ---
   minio:
     image: minio/minio
     container_name: p6_minio
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+    command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
-    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
     volumes:
       - minio_data:/data
     networks:
       - app_network
 
-  # --- 3. Backend API (Nom du service : backend) ---
-  backend:
-    build: ./backend
-    container_name: p6_backend
+  # --- PACS Server (Orthanc) - OPEN MODE ---
+  orthanc:
+    image: jodogne/orthanc-plugins
+    container_name: p6_orthanc
     ports:
-      - "8000:8000"
-    depends_on:
-      - db
-      - minio
+      - "4242:4242"
+      - "8042:8042"
     environment:
-      # Ici on utilise "db" car c'est le nom du service ligne 3
-      DATABASE_URL: postgresql://admin:password_secure@db:5432/biopsie_db
-      MINIO_ENDPOINT: minio:9000
+      ORTHANC_NAME: "MY_PACS"
+      ORTHANC_JSON: |
+        {
+          "Name" : "Orthanc",
+          "HttpPort" : 8042,
+          "DicomPort" : 4242,
+          "RemoteAccessAllowed" : true,
+          "AuthenticationEnabled" : false, 
+          "HttpServerEnabled" : true,
+          "DicomServerEnabled" : true,
+          "CorsEnabled": true,
+          "CorsAllowCredentials": true,
+          "CorsAllowedOrigins": ["*"], 
+          "CorsAllowedHeaders": ["Origin", "Accept", "Content-Type", "Authorization"]
+        }
     volumes:
-      - ./backend:/app
-      - /app/.venv
+      - orthanc-storage:/var/lib/orthanc/db
     networks:
       - app_network
 
-  # --- 4. Frontend React (Nom du service : frontend) ---
+  # --- Backend (Python/FastAPI) ---
+  backend:
+    build: ./backend
+    container_name: p6_backend
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - minio
+      - orthanc
+    networks:
+      - app_network
+
+  # --- Frontend (React/Vite) ---
   frontend:
     build: ./frontend
     container_name: p6_frontend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules # <--- KEEPS CONTAINER MODULES SAFE
     ports:
       - "5173:5173"
     environment:
       - VITE_API_URL=http://localhost:8000
-    depends_on:
-      - backend
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
     networks:
       - app_network
 
 volumes:
   postgres_data:
   minio_data:
+  orthanc-storage:
 
 networks:
   app_network:

@@ -6,3 +6,8 @@ minio
 pyvips
 pydantic
 python-multipart
+pydicom
+requests
+numpy
+pillow
+pyvips

@@ -1,60 +1,115 @@
 import os
+import requests
 import pyvips
-from minio import Minio
+import pydicom
+from pydicom.dataset import FileDataset, FileMetaDataset
+from pydicom.uid import generate_uid, ImplicitVRLittleEndian
+import datetime
 
-# Configuration MinIO (Interne à Docker)
-MINIO_CLIENT = Minio(
-    "minio:9000", # Nom du service dans docker-compose
-    access_key="minioadmin",
-    secret_key="minioadmin",
-    secure=False
-)
-
+# --- CONFIGURATION ---
 INPUT_DIR = "."
-OUTPUT_DIR = "biopsie_cmu_1_files"
-BUCKET_NAME = "biopsies"
+# Use the internal docker network name
+ORTHANC_URL = "http://orthanc:8042/instances" 
+MAX_SIZE = 8192 
+
+def create_dicom_from_image(image_path, patient_name, patient_id):
+    sop_instance_uid = generate_uid()
+    series_instance_uid = generate_uid()
+    study_instance_uid = generate_uid()
+    sop_class_uid = "1.2.840.10008.5.1.4.1.1.7" 
+
+    file_meta = FileMetaDataset()
+    file_meta.MediaStorageSOPClassUID = sop_class_uid
+    file_meta.MediaStorageSOPInstanceUID = sop_instance_uid
+    file_meta.ImplementationClassUID = generate_uid()
+    file_meta.TransferSyntaxUID = ImplicitVRLittleEndian
+
+    ds = FileDataset(None, {}, file_meta=file_meta, preamble=b"\0" * 128)
+
+    ds.PatientName = patient_name
+    ds.PatientID = patient_id
+    ds.StudyInstanceUID = study_instance_uid
+    ds.SeriesInstanceUID = series_instance_uid
+    ds.SOPInstanceUID = sop_instance_uid
+    ds.SOPClassUID = sop_class_uid
+    
+    ds.Modality = "OT"
+    ds.SamplesPerPixel = 3
+    # Explicitly state RGB interpretation
+    ds.PhotometricInterpretation = "RGB" 
+    ds.PixelRepresentation = 0
+    ds.BitsAllocated = 8
+    ds.BitsStored = 8
+    ds.HighBit = 7
+    
+    dt = datetime.datetime.now()
+    ds.ContentDate = dt.strftime('%Y%m%d')
+    ds.ContentTime = dt.strftime('%H%M%S.%f')[:6]
+    
+    print(f"🖼️ Reading image and correcting colors...")
+    vips_img = pyvips.Image.new_from_file(image_path, access="sequential")
+    
+    # --- COLOR CORRECTION ---
+    # Force conversion to sRGB. This fixes the Blue/Cyan issue.
+    # If the image is already sRGB, this does nothing harmful.
+    if vips_img.interpretation != 'srgb':
+        vips_img = vips_img.colourspace('srgb')
+    
+    if vips_img.width > MAX_SIZE:
+        vips_img = vips_img.thumbnail_image(MAX_SIZE)
+    
+    mem_buf = vips_img.write_to_memory()
+    
+    ds.Rows = vips_img.height
+    ds.Columns = vips_img.width
+    ds.PixelData = mem_buf
+    ds.is_little_endian = True
+    ds.is_implicit_VR = True
+
+    return ds
 
 def convert_and_upload():
-    # 1. Création du dossier local
-    if not os.path.exists(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
+    print("--- Start DICOM Conversion ---")
+    files = [f for f in os.listdir(INPUT_DIR) if f.endswith(".svs") or f.endswith(".tif") or f.endswith(".jpg") or f.endswith(".png")]
+    
+    # Filter for SVS first as per your project, but fallback to others if needed for testing
+    svs_files = [f for f in files if f.endswith(".svs")]
+    target_file = svs_files[0] if svs_files else (files[0] if files else None)
 
-    # 2. Recherche du fichier .svs
-    files = [f for f in os.listdir(INPUT_DIR) if f.endswith(".svs")]
-    if not files:
-        print("❌ Aucun fichier .svs trouvé !")
+    if not target_file:
+        print("❌ No image file found (svs, jpg, png, tif).")
         return
 
-    svs_file = files[0]
-    print(f"🚀 1/2 Conversion de {svs_file}...")
+    print(f"🚀 Processing {target_file}...")
 
     try:
-        # Conversion avec PyVips
-        image = pyvips.Image.new_from_file(svs_file, access="sequential")
-        preview = image.thumbnail_image(2048) # HD pour Cornerstone
+        dicom_obj = create_dicom_from_image(target_file, "Jean Dupont", "CMU-1")
+        output_dcm = "temp_output.dcm"
+        dicom_obj.save_as(output_dcm, write_like_original=False) 
         
-        local_path = os.path.join(OUTPUT_DIR, "preview.jpg")
-        preview.write_to_file(local_path)
-        print(f"✅ Image locale créée : {local_path}")
-
-        # 3. Envoi vers MinIO
-        print(f"☁️ 2/2 Envoi vers MinIO (Bucket: {BUCKET_NAME})...")
-        
-        # On vérifie si le bucket existe, sinon on le crée
-        if not MINIO_CLIENT.bucket_exists(BUCKET_NAME):
-            MINIO_CLIENT.make_bucket(BUCKET_NAME)
-            # Politique publique pour la lecture
-            policy = '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/*"]}]}' % BUCKET_NAME
-            MINIO_CLIENT.set_bucket_policy(BUCKET_NAME, policy)
-
-        # Upload du fichier
-        remote_path = f"{OUTPUT_DIR}/preview.jpg"
-        MINIO_CLIENT.fput_object(BUCKET_NAME, remote_path, local_path)
-        
-        print(f"🎉 SUCCÈS ! Image disponible sur : http://localhost:9000/{BUCKET_NAME}/{remote_path}")
+        print(f"☁️ Uploading to Orthanc...")
+        with open(output_dcm, 'rb') as f:
+            content = f.read()
+            # Auth is included just in case, but open mode will ignore it
+            res = requests.post(
+                ORTHANC_URL, 
+                data=content, 
+                headers={'Content-Type': 'application/dicom'},
+                auth=('orthanc', 'orthanc') 
+            )
+            
+        if res.status_code == 200:
+            try:
+                instance_id = res.json()['ID']
+                print(f"🎉 SUCCESS! Image stored.")
+                print(f"🆔 Orthanc ID: {instance_id}")
+            except:
+                print("⚠️ Success (200) but unexpected JSON response.")
+        else:
+            print(f"❌ Orthanc Error ({res.status_code}): {res.text}")
 
     except Exception as e:
-        print(f"❌ Erreur : {e}")
+        print(f"❌ Error: {e}")
 
 if __name__ == "__main__":
     convert_and_upload()
