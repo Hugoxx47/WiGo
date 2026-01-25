@@ -19,8 +19,11 @@ class Biopsy(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     patient_id = Column(Integer, ForeignKey("patients.id"))
-    image_url = Column(String) # URL MinIO
-    status = Column(String, default="En attente") # En attente, Analysé, Validé
+    
+    # C'est la colonne qui te manquait :
+    image_url = Column(String) 
+    
+    status = Column(String, default="En attente") 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     patient = relationship("Patient", back_populates="biopsies")

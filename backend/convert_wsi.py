@@ -7,109 +7,100 @@ from pydicom.uid import generate_uid, ImplicitVRLittleEndian
 import datetime
 
 # --- CONFIGURATION ---
-INPUT_DIR = "."
-# Use the internal docker network name
-ORTHANC_URL = "http://orthanc:8042/instances" 
+INPUT_FILE = "CMU-1.svs"
+ORTHANC_URL = "http://orthanc:8042/instances"
+
+# AMÉLIORATION QUALITÉ : On passe de 4096 à 8192 (8K)
+# C'est beaucoup plus net, tout en restant compatible web.
 MAX_SIZE = 8192 
 
-def create_dicom_from_image(image_path, patient_name, patient_id):
-    sop_instance_uid = generate_uid()
-    series_instance_uid = generate_uid()
-    study_instance_uid = generate_uid()
-    sop_class_uid = "1.2.840.10008.5.1.4.1.1.7" 
+def create_dicom(image_path, patient_name, patient_id):
+    if not os.path.exists(image_path):
+        raise Exception(f"Fichier {image_path} introuvable.")
+
+    print(f"🖼️  Traitement de l'image (Cible: {MAX_SIZE}px)...")
+
+    # 1. Chargement intelligent
+    try:
+        vips_img = pyvips.Image.new_from_file(image_path, level=1)
+    except:
+        vips_img = pyvips.Image.new_from_file(image_path)
+
+    # 2. Nettoyage (Alpha + sRGB + Resize)
+    if vips_img.hasalpha():
+        vips_img = vips_img.flatten(background=[255, 255, 255])
+    
+    if vips_img.interpretation != 'srgb':
+        vips_img = vips_img.colourspace('srgb')
+
+    if vips_img.width > MAX_SIZE:
+        vips_img = vips_img.thumbnail_image(MAX_SIZE)
+
+    # 3. Encapsulation DICOM
+    mem_buf = vips_img.write_to_memory()
+    
+    sop_uid = generate_uid()
+    series_uid = generate_uid()
+    study_uid = generate_uid()
 
     file_meta = FileMetaDataset()
-    file_meta.MediaStorageSOPClassUID = sop_class_uid
-    file_meta.MediaStorageSOPInstanceUID = sop_instance_uid
+    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.7"
+    file_meta.MediaStorageSOPInstanceUID = sop_uid
     file_meta.ImplementationClassUID = generate_uid()
     file_meta.TransferSyntaxUID = ImplicitVRLittleEndian
 
     ds = FileDataset(None, {}, file_meta=file_meta, preamble=b"\0" * 128)
-
     ds.PatientName = patient_name
     ds.PatientID = patient_id
-    ds.StudyInstanceUID = study_instance_uid
-    ds.SeriesInstanceUID = series_instance_uid
-    ds.SOPInstanceUID = sop_instance_uid
-    ds.SOPClassUID = sop_class_uid
+    ds.StudyInstanceUID = study_uid
+    ds.SeriesInstanceUID = series_uid
+    ds.SOPInstanceUID = sop_uid
+    ds.SOPClassUID = "1.2.840.10008.5.1.4.1.1.7" 
     
     ds.Modality = "OT"
     ds.SamplesPerPixel = 3
-    # Explicitly state RGB interpretation
-    ds.PhotometricInterpretation = "RGB" 
+    ds.PlanarConfiguration = 0 # Vital pour les couleurs
+    ds.PhotometricInterpretation = "RGB"
     ds.PixelRepresentation = 0
     ds.BitsAllocated = 8
     ds.BitsStored = 8
     ds.HighBit = 7
-    
-    dt = datetime.datetime.now()
-    ds.ContentDate = dt.strftime('%Y%m%d')
-    ds.ContentTime = dt.strftime('%H%M%S.%f')[:6]
-    
-    print(f"🖼️ Reading image and correcting colors...")
-    vips_img = pyvips.Image.new_from_file(image_path, access="sequential")
-    
-    # --- COLOR CORRECTION ---
-    # Force conversion to sRGB. This fixes the Blue/Cyan issue.
-    # If the image is already sRGB, this does nothing harmful.
-    if vips_img.interpretation != 'srgb':
-        vips_img = vips_img.colourspace('srgb')
-    
-    if vips_img.width > MAX_SIZE:
-        vips_img = vips_img.thumbnail_image(MAX_SIZE)
-    
-    mem_buf = vips_img.write_to_memory()
-    
     ds.Rows = vips_img.height
     ds.Columns = vips_img.width
     ds.PixelData = mem_buf
     ds.is_little_endian = True
     ds.is_implicit_VR = True
+    
+    dt = datetime.datetime.now()
+    ds.ContentDate = dt.strftime('%Y%m%d')
+    ds.ContentTime = dt.strftime('%H%M%S.%f')[:6]
 
     return ds
 
-def convert_and_upload():
-    print("--- Start DICOM Conversion ---")
-    files = [f for f in os.listdir(INPUT_DIR) if f.endswith(".svs") or f.endswith(".tif") or f.endswith(".jpg") or f.endswith(".png")]
-    
-    # Filter for SVS first as per your project, but fallback to others if needed for testing
-    svs_files = [f for f in files if f.endswith(".svs")]
-    target_file = svs_files[0] if svs_files else (files[0] if files else None)
-
-    if not target_file:
-        print("❌ No image file found (svs, jpg, png, tif).")
-        return
-
-    print(f"🚀 Processing {target_file}...")
-
+def main():
     try:
-        dicom_obj = create_dicom_from_image(target_file, "Jean Dupont", "CMU-1")
-        output_dcm = "temp_output.dcm"
-        dicom_obj.save_as(output_dcm, write_like_original=False) 
+        print("🚀 Démarrage conversion SVS -> DICOM...")
+        dicom_obj = create_dicom(INPUT_FILE, "Jean Dupont", "CMU-1")
         
-        print(f"☁️ Uploading to Orthanc...")
+        output_dcm = "output.dcm"
+        dicom_obj.save_as(output_dcm, write_like_original=False)
+        print(f"✅ Conversion terminée (Fichier: {output_dcm})")
+
         with open(output_dcm, 'rb') as f:
-            content = f.read()
-            # Auth is included just in case, but open mode will ignore it
             res = requests.post(
                 ORTHANC_URL, 
-                data=content, 
+                data=f.read(), 
                 headers={'Content-Type': 'application/dicom'},
                 auth=('orthanc', 'orthanc') 
             )
-            
+
         if res.status_code == 200:
-            try:
-                instance_id = res.json()['ID']
-                print(f"🎉 SUCCESS! Image stored.")
-                print(f"🆔 Orthanc ID: {instance_id}")
-            except:
-                print("⚠️ Success (200) but unexpected JSON response.")
+            print("🎉 SUCCÈS ! Image HD envoyée à Orthanc.")
         else:
-            print(f"❌ Orthanc Error ({res.status_code}): {res.text}")
+            print(f"❌ Erreur Orthanc : {res.text}")
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Erreur : {e}")
 
 if __name__ == "__main__":
-    convert_and_upload()
+    main()

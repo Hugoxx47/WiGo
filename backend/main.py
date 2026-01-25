@@ -4,40 +4,37 @@ import requests
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 from sqlalchemy.exc import OperationalError
 
 import models
 import database
 
-# Attente BDD
+# --- INIT BDD ---
 while True:
     try:
+        models.Base.metadata.drop_all(bind=database.engine)
         models.Base.metadata.create_all(bind=database.engine)
-        print("✅ Base de données connectée et synchronisée !")
+        print("✅ Base de données initialisée.")
         break
     except OperationalError:
-        print("⏳ La BDD n'est pas encore prête... Nouvelle tentative dans 2 secondes.")
+        print("⏳ Attente BDD...")
         time.sleep(2)
 
 app = FastAPI()
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    CORSMiddleware, allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
 )
 
 # --- SCHEMAS ---
 class BiopsySchema(BaseModel):
     id: int
-    image_url: str
+    image_url: Optional[str] = None 
     status: str
-    class Config:
-        from_attributes = True
+    class Config: from_attributes = True
 
 class PatientSchema(BaseModel):
     id: int
@@ -45,8 +42,7 @@ class PatientSchema(BaseModel):
     age: int
     folder_id: str
     biopsies: List[BiopsySchema] = []
-    class Config:
-        from_attributes = True
+    class Config: from_attributes = True
 
 class AIResult(BaseModel):
     cancer_detected: bool
@@ -56,39 +52,33 @@ class AIResult(BaseModel):
 
 # --- ROUTES ---
 @app.get("/")
-def read_root():
-    return {"status": "API Biopsie Online 🟢"}
+def read_root(): return {"status": "API Biopsie Online 🟢"}
 
 @app.post("/seed")
 def seed_database(db: Session = Depends(database.get_db)):
+    # 1. Nettoyage complet
+    db.query(models.Biopsy).delete()
+    db.query(models.Patient).delete()
+    db.commit()
 
-    # 2. Get Orthanc ID (NO AUTH)
-    orthanc_id = "EMPTY"
+    # 2. Récupération ID Orthanc
+    orthanc_id = None
     try:
-        # NO auth parameter here
-        response = requests.get("http://orthanc:8042/instances")
-        if response.status_code == 200:
-            instances = response.json()
-            if instances:
-                orthanc_id = instances[0]
-                print(f"✅ Image Orthanc trouvée : {orthanc_id}")
-            else:
-                print("⚠️ Orthanc est vide.")
-        else:
-            print(f"❌ Erreur connexion Orthanc: {response.status_code}")
-    except Exception as e:
-        print(f"❌ Erreur Script : {e}")
+        r = requests.get("http://orthanc:8042/instances", auth=('orthanc', 'orthanc'), timeout=2)
+        if r.status_code == 200 and r.json():
+            orthanc_id = r.json()[0]
+    except: pass
 
-    # 3. Création des patients
-    patients_data = [
+    # 3. Création des patients (Tous à "Non analysé")
+    patients_list = [
         {"name": "Jean Dupont", "age": 65, "folder": "CMU-1"},
         {"name": "Marie Curie", "age": 58, "folder": "CASE-2"},
         {"name": "Thomas Anderson", "age": 35, "folder": "MATRIX-3"},
         {"name": "Sarah Connor", "age": 42, "folder": "SKY-4"},
     ]
 
-    for p in patients_data:
-        patient = models.Patient(name=p["name"], age=p["age"], folder_id=p["folder"])
+    for p_data in patients_list:
+        patient = models.Patient(name=p_data["name"], age=p_data["age"], folder_id=p_data["folder"])
         db.add(patient)
         db.commit()
         db.refresh(patient)
@@ -99,31 +89,31 @@ def seed_database(db: Session = Depends(database.get_db)):
             status="Non analysé" 
         )
         db.add(biopsy)
-    
+
     db.commit()
-    return {"message": f"✅ Base prête : 4 patients liés à l'image {orthanc_id}"}
+    return {"message": "✅ Base prête : 4 patients (Non analysés)."}
 
 @app.get("/patients", response_model=List[PatientSchema])
 def get_patients(db: Session = Depends(database.get_db)):
-    patients = db.query(models.Patient).all()
-    return patients
+    return db.query(models.Patient).all()
 
 @app.post("/biopsies/{biopsy_id}/analyze", response_model=AIResult)
 def analyze_biopsy(biopsy_id: int, db: Session = Depends(database.get_db)):
     biopsy = db.query(models.Biopsy).filter(models.Biopsy.id == biopsy_id).first()
-    if not biopsy:
-        raise HTTPException(status_code=404, detail="Biopsie introuvable")
-
-    time.sleep(3) 
+    if not biopsy: raise HTTPException(status_code=404, detail="Biopsie introuvable")
+    
+    time.sleep(2)
+    
+    # Simulation IA
     has_cancer = random.choice([True, False])
-    confidence = round(random.uniform(0.85, 0.99), 2)
-    cells = random.randint(1000, 5000)
+    
+    # Mise à jour du statut SEULEMENT quand on clique sur Analyser
     biopsy.status = "Validé" if not has_cancer else "À vérifier"
     db.commit()
-
+    
     return {
         "cancer_detected": has_cancer,
-        "confidence": confidence,
-        "cells_count": cells,
+        "confidence": round(random.uniform(0.85, 0.99), 2),
+        "cells_count": random.randint(1000, 5000),
         "regions_found": random.randint(3, 15)
     }
