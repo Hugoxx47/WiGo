@@ -16,29 +16,15 @@ services:
     networks:
       - app_network
 
-  # --- PACS Server (Orthanc) - OPEN MODE ---
+  # --- PACS Server (Orthanc) ---
   orthanc:
     image: jodogne/orthanc-plugins
     container_name: p6_orthanc
-    ports:
-      - "4242:4242"
-      - "8042:8042"
+    ports: ["4242:4242", "8042:8042"]
     environment:
       ORTHANC_NAME: "MY_PACS"
       ORTHANC_JSON: |
-        {
-          "Name" : "Orthanc",
-          "HttpPort" : 8042,
-          "DicomPort" : 4242,
-          "RemoteAccessAllowed" : true,
-          "AuthenticationEnabled" : false, 
-          "HttpServerEnabled" : true,
-          "DicomServerEnabled" : true,
-          "CorsEnabled": true,
-          "CorsAllowCredentials": true,
-          "CorsAllowedOrigins": ["*"], 
-          "CorsAllowedHeaders": ["Origin", "Accept", "Content-Type", "Authorization"]
-        }
+        { "Name" : "Orthanc", "HttpPort" : 8042, "DicomPort" : 4242, "RemoteAccessAllowed" : true, "AuthenticationEnabled" : false, "HttpServerEnabled" : true, "DicomServerEnabled" : true, "CorsEnabled": true, "CorsAllowCredentials": true, "CorsAllowedOrigins": ["*"] }
     volumes:
       - orthanc-storage:/var/lib/orthanc/db
     networks:
@@ -51,6 +37,7 @@ services:
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./backend:/app
+      - ./backend/dzi_data:/app/dzi_data
     ports:
       - "8000:8000"
     depends_on:
@@ -65,7 +52,7 @@ services:
     container_name: p6_frontend
     volumes:
       - ./frontend:/app
-      - /app/node_modules # <--- KEEPS CONTAINER MODULES SAFE
+      - /app/node_modules
     ports:
       - "5173:5173"
     environment:

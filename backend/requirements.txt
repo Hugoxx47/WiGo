@@ -5,8 +5,6 @@ psycopg2-binary
 pyvips
 pydantic
 python-multipart
-pydicom
-requests
 numpy
 pillow
 pyvips
