@@ -104,7 +104,7 @@ export default function Dashboard() {
 
   const handleLogout = () => {
       localStorage.removeItem("biopsie_user"); // On nettoie la session locale
-      navigate('/');
+      navigate('/login');
   };
 
   return (
