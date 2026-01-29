@@ -1,22 +1,11 @@
-# backend/Dockerfile
-FROM python:3.9
+FROM python:3.9-slim
 
 WORKDIR /app
 
-# 1. Installation des dépendances système (DCMTK + LibVips + Java pour wsi-to-dicom si besoin)
-RUN apt-get update && apt-get install -y \
-    libgl1 \
-    libvips-dev \
-    dcmtk \
-    cmake \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# 2. Installation des dépendances Python
+# Plus aucune librairie système compliquée
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 3. Copie du code
 COPY . .
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

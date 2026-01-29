@@ -1,29 +1,22 @@
 import time
 import os
-import shutil
-import pyvips
-import random
-from datetime import datetime
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles 
 from sqlalchemy.orm import Session
-from typing import List, Optional
 from pydantic import BaseModel
-from sqlalchemy.exc import OperationalError
-
+from typing import List, Optional
 import models
 import database
 
 # --- INIT BDD ---
 while True:
     try:
-        models.Base.metadata.drop_all(bind=database.engine)
         models.Base.metadata.create_all(bind=database.engine)
-        print("✅ Base de données initialisée.")
+        print("✅ Base de données connectée.")
         break
-    except OperationalError:
-        print("⏳ Attente BDD...")
+    except Exception as e:
+        print(f"⏳ Attente BDD... ({e})")
         time.sleep(2)
 
 app = FastAPI()
@@ -33,10 +26,15 @@ app.add_middleware(
     allow_methods=["*"], allow_headers=["*"],
 )
 
-# --- CONFIG DZI ---
+@app.middleware("http")
+async def add_cors_header(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
+
 DZI_FOLDER = "/app/dzi_data"
 os.makedirs(DZI_FOLDER, exist_ok=True)
-app.mount("/dzi", StaticFiles(directory=DZI_FOLDER), name="dzi")
+app.mount("/dzi_data", StaticFiles(directory=DZI_FOLDER), name="dzi_data")
 
 # --- SCHEMAS ---
 class ROIRequest(BaseModel):
@@ -48,10 +46,22 @@ class ROIRequest(BaseModel):
     patient_folder: str
     patient_name: str     
     annotation_label: str 
+    # NOUVEAUX CHAMPS FORMULAIRE
+    birth_date: Optional[str] = None
+    family_history: Optional[str] = None
+    medical_history: Optional[str] = None
+
+class DrawingRequest(BaseModel):
+    extraction_id: int
+    x: int
+    y: int
+    w: int
+    h: int
+    label: str
 
 class BiopsySchema(BaseModel):
     id: int
-    image_url: Optional[str] = None 
+    image_url: str
     status: str
     class Config: from_attributes = True
 
@@ -60,120 +70,101 @@ class PatientSchema(BaseModel):
     name: str
     age: int
     folder_id: str
-    biopsies: List[BiopsySchema] = []
+    birth_date: Optional[str] = None
+    family_history: Optional[str] = None
+    medical_history: Optional[str] = None
+    biopsies: List[BiopsySchema] = [] 
     class Config: from_attributes = True
-
-class AIResult(BaseModel):
-    cancer_detected: bool
-    confidence: float
-    cells_count: int
-    regions_found: int
 
 # --- ROUTES ---
 
-@app.post("/extract-roi")
-def extract_roi_to_svs(roi: ROIRequest):
-    """
-    Extraction Pro : Dossier Patient > Extractions > Nom_Patient_Label_Date.svs
-    """
-    source_path = "/app/CMU-1.svs"
-    
-    if not os.path.exists(source_path):
-        raise HTTPException(status_code=404, detail="Fichier source SVS introuvable")
-
-    # 1. Nettoyage des noms pour éviter les caractères interdits
-    def clean_name(name):
-        return "".join(c for c in name if c.isalnum() or c in (' ', '-', '_')).strip().replace(" ", "_")
-
-    safe_folder = clean_name(roi.patient_folder)
-    safe_patient = clean_name(roi.patient_name)
-    safe_label = clean_name(roi.annotation_label)
-    date_str = datetime.now().strftime("%Y%m%d_%H%M")
-
-    # 2. Structure Pro : dzi_data / CMU-1 / extractions /
-    patient_dir = os.path.join(DZI_FOLDER, safe_folder, "extractions")
-    os.makedirs(patient_dir, exist_ok=True)
-
-    # 3. Nom de fichier Pro : Jean_Dupont_Zone_Suspecte_20231012.svs
-    filename_str = f"{safe_patient}_{safe_label}_{date_str}.svs"
-    output_path = os.path.join(patient_dir, filename_str)
-
-    try:
-        print(f"✂️ Extraction Pro vers {output_path}...")
-        
-        image = pyvips.Image.new_from_file(source_path, access="sequential")
-        
-        # Sécurisation des coordonnées
-        safe_x = max(0, min(roi.x, image.width))
-        safe_y = max(0, min(roi.y, image.height))
-        safe_width = min(roi.width, image.width - safe_x)
-        safe_height = min(roi.height, image.height - safe_y)
-
-        # Extraction et Sauvegarde
-        region = image.extract_area(safe_x, safe_y, safe_width, safe_height)
-        
-        region.tiffsave(
-            output_path, 
-            compression="jpeg", 
-            Q=90, 
-            tile=True, 
-            pyramid=True, 
-            bigtiff=True
-        )
-        
-        # Chemin relatif pour l'affichage
-        relative_path = f"{safe_folder}/extractions/{filename_str}"
-        
-        return {
-            "message": "Extraction réussie", 
-            "file": relative_path,
-            "filename": filename_str
-        }
-
-    except Exception as e:
-        print(f"❌ Erreur extraction : {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ... (Le reste des routes seed, patients, analyze ne change pas) ...
-@app.post("/stitch-dzi/{filename}")
-def stitch_dzi_to_svs(filename: str):
-    return {"message": "Utiliser /extract-roi pour générer des SVS"}
-
 @app.post("/seed")
 def seed_database(db: Session = Depends(database.get_db)):
-    db.query(models.Biopsy).delete()
-    db.query(models.Patient).delete()
-    db.commit()
-    default_dzi = "biopsie_cmu_1.dzi" 
-    patients_list = [
-        {"name": "Jean Dupont", "age": 65, "folder": "CMU-1"},
-        {"name": "Marie Curie", "age": 58, "folder": "CASE-2"},
+    try:
+        db.query(models.Drawing).delete()
+        db.query(models.Extraction).delete()
+        db.query(models.Biopsy).delete()
+        db.query(models.Patient).delete()
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    patients_data = [
+        {"name": "Jean Dupont", "age": 65, "folder": "CMU-1", "birth": "1958-05-12", "family": "Non", "med": "Hypertension"},
+        {"name": "Marie Curie", "age": 58, "folder": "CASE-2", "birth": "1965-11-07", "family": "Oui", "med": "Suivi annuel"},
+        {"name": "Paul Martin", "age": 42, "folder": "X-99", "birth": "1982-02-23", "family": "Non", "med": "RAS"}
     ]
-    for p_data in patients_list:
-        patient = models.Patient(name=p_data["name"], age=p_data["age"], folder_id=p_data["folder"])
+    
+    default_image = "biopsie_cmu_1.dzi"
+    
+    count = 0
+    for p in patients_data:
+        patient = models.Patient(
+            name=p["name"], age=p["age"], folder_id=p["folder"],
+            birth_date=p["birth"], family_history=p["family"], medical_history=p["med"]
+        )
         db.add(patient)
         db.commit()
         db.refresh(patient)
-        biopsy = models.Biopsy(patient_id=patient.id, image_url=default_dzi, status="Non analysé")
+        
+        biopsy = models.Biopsy(patient_id=patient.id, image_url=default_image, status="Non analysé")
         db.add(biopsy)
+        count += 1
+    
     db.commit()
-    return {"message": "Base prête (Mode DZI)."}
+    return {"message": f"Succès ! {count} patients ajoutés."}
 
 @app.get("/patients", response_model=List[PatientSchema])
 def get_patients(db: Session = Depends(database.get_db)):
     return db.query(models.Patient).all()
 
-@app.post("/biopsies/{biopsy_id}/analyze", response_model=AIResult)
-def analyze_biopsy(biopsy_id: int, db: Session = Depends(database.get_db)):
-    biopsy = db.query(models.Biopsy).filter(models.Biopsy.id == biopsy_id).first()
-    if not biopsy: raise HTTPException(status_code=404, detail="Biopsie introuvable")
-    time.sleep(2)
-    has_cancer = random.choice([True, False])
-    biopsy.status = "Validé" if not has_cancer else "À vérifier"
+@app.post("/extract-roi")
+def extract_roi(roi: ROIRequest, db: Session = Depends(database.get_db)):
+    # 1. On récupère ou crée le patient
+    patient = db.query(models.Patient).filter(models.Patient.folder_id == roi.patient_folder).first()
+    if not patient:
+        patient = models.Patient(name=roi.patient_name, age=0, folder_id=roi.patient_folder)
+        db.add(patient)
+        db.commit()
+        db.refresh(patient)
+
+    # 2. MISE À JOUR DES INFOS MÉDICALES (C'est ici la magie)
+    # Si le formulaire envoie des données, on met à jour le patient
+    if roi.birth_date: patient.birth_date = roi.birth_date
+    if roi.family_history: patient.family_history = roi.family_history
+    if roi.medical_history: patient.medical_history = roi.medical_history
     db.commit()
-    return {
-        "cancer_detected": has_cancer,
-        "confidence": round(random.uniform(0.85, 0.99), 2),
-        "cells_count": random.randint(1000, 5000),
-        "regions_found": random.randint(3, 15)
-    }
+
+    # 3. Création de l'extraction
+    new_ext = models.Extraction(
+        patient_id=patient.id,
+        label=roi.annotation_label,
+        dzi_url="biopsie_cmu_1.dzi",
+        x=roi.x, y=roi.y, w=roi.width, h=roi.height
+    )
+    db.add(new_ext)
+    db.commit()
+    return {"message": "Dossier mis à jour et Zone sauvegardée", "id": new_ext.id}
+
+@app.get("/patients/{folder_id}/extractions")
+def get_extractions(folder_id: str, db: Session = Depends(database.get_db)):
+    patient = db.query(models.Patient).filter(models.Patient.folder_id == folder_id).first()
+    if not patient: return []
+    results = []
+    for e in patient.extractions:
+        results.append({
+            "id": e.id,
+            "filename": e.label,
+            "url": f"http://localhost:8000/dzi_data/{e.dzi_url}",
+            "roi": { "x": e.x, "y": e.y, "w": e.w, "h": e.h }
+        })
+    return results
+
+@app.post("/annotations/save")
+def save_drawing(draw: DrawingRequest, db: Session = Depends(database.get_db)):
+    db.add(models.Drawing(
+        extraction_id=draw.extraction_id,
+        x=draw.x, y=draw.y, w=draw.w, h=draw.h, label=draw.label
+    ))
+    db.commit()
+    return {"message": "Annotation enregistrée"}

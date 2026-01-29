@@ -1,13 +1,20 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getPatients, type Patient } from '../services/api';
+
+// Icônes
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import FolderSharedIcon from '@mui/icons-material/FolderShared';
 import PersonIcon from '@mui/icons-material/Person';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import LogoutIcon from '@mui/icons-material/Logout';
+import RefreshIcon from '@mui/icons-material/Refresh';
 
+// Composants externes
+import PatientCard from '../components/PatientCard';
+
+// Graphiques
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend 
@@ -30,41 +37,48 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null); 
   
   const username = localStorage.getItem("biopsie_user") || "Invité";
   const initials = username.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
 
-  // --- 1. RESET AUTOMATIQUE AU CHANGEMENT DE COMPTE ---
+  const fetchPatients = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+          const data = await getPatients();
+          if (Array.isArray(data)) {
+              setPatients(data);
+          } else {
+              setPatients([]);
+          }
+      } catch (err) {
+          console.error("Erreur chargement:", err);
+          setError("Impossible de charger les patients.");
+      } finally {
+          setLoading(false);
+      }
+  };
+
   useEffect(() => {
     const initDashboard = async () => {
         const lastUser = localStorage.getItem("last_active_user");
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
         if (lastUser !== username) {
-            console.log("🔄 Nouvel utilisateur : Reset des données...");
             try {
-                // On remet la BDD à zéro via l'API
-                await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/seed`, { method: 'POST' });
+                await fetch(`${apiUrl}/seed`, { method: 'POST' });
                 localStorage.setItem("last_active_user", username);
-            } catch (error) {
-                console.error("Erreur Reset Auto:", error);
+            } catch (e) {
+                console.warn("Seed auto échoué", e);
             }
         }
-
-        // On charge les données (vierges ou non)
-        try {
-            const data = await getPatients();
-            setPatients(data);
-        } catch (error) {
-            console.error(error);
-        } finally {
-            setLoading(false);
-        }
+        fetchPatients();
     };
-
     initDashboard();
   }, [username]);
 
-  // --- 2. CALCULS STATISTIQUES ---
+  // --- STATS ---
   const { stats, pieData, activityData, hasActivity } = useMemo(() => {
     let totalPatients = 0;
     let analyzedCount = 0;
@@ -77,18 +91,19 @@ export default function Dashboard() {
 
     patients.forEach(patient => {
       totalPatients++;
-      patient.biopsies.forEach(biopsy => {
-        if (biopsy.status === "Validé" || biopsy.status === "À vérifier") {
-            analyzedCount++;
-            weekActivity[todayIndex].analyses += 1;
-            if (biopsy.status === "À vérifier") criticalCases++;
-            if (biopsy.status === "Validé") validatedCases++;
-        }
-      });
+      if (patient.biopsies) {
+          patient.biopsies.forEach(biopsy => {
+            if (biopsy.status === "Validé" || biopsy.status === "À vérifier") {
+                analyzedCount++;
+                weekActivity[todayIndex].analyses += 1;
+                if (biopsy.status === "À vérifier") criticalCases++;
+                if (biopsy.status === "Validé") validatedCases++;
+            }
+          });
+      }
     });
 
     const safeRate = analyzedCount > 0 ? Math.round((validatedCases / analyzedCount) * 100) : 0;
-
     const pData = [
       { name: 'Sains', value: validatedCases },
       { name: 'Anomalies', value: criticalCases },
@@ -103,14 +118,13 @@ export default function Dashboard() {
   }, [patients]);
 
   const handleLogout = () => {
-      localStorage.removeItem("biopsie_user"); // On nettoie la session locale
+      localStorage.removeItem("biopsie_user");
       navigate('/login');
   };
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-10 relative overflow-hidden font-sans text-white">
       <div className="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-slate-900 to-transparent -z-10"></div>
-
       <div className="max-w-7xl mx-auto z-10 relative">
         <header className="flex justify-between items-center mb-10">
           <div>
@@ -118,6 +132,9 @@ export default function Dashboard() {
             <p className="text-slate-400 mt-2">Bienvenue, {username}</p>
           </div>
           <div className="flex items-center gap-4">
+             <button onClick={fetchPatients} className="p-3 bg-slate-800 rounded-full hover:bg-slate-700 transition-colors" title="Recharger">
+                <RefreshIcon fontSize="small"/>
+             </button>
              <div className="h-12 w-12 rounded-full bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-bold shadow-lg shadow-cyan-500/20 ring-2 ring-slate-800">
                 {initials}
              </div>
@@ -129,6 +146,11 @@ export default function Dashboard() {
 
         {loading ? (
             <div className="text-center py-20 animate-pulse text-slate-500">Chargement...</div>
+        ) : error ? (
+            <div className="bg-red-500/10 border border-red-500/50 p-6 rounded-2xl text-center">
+                <p className="text-red-400 mb-4">{error}</p>
+                <button onClick={fetchPatients} className="px-4 py-2 bg-red-500 text-white rounded-lg">Réessayer</button>
+            </div>
         ) : (
             <>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -143,11 +165,11 @@ export default function Dashboard() {
                         <div className="col-span-3 bg-slate-900/50 border border-slate-800 border-dashed rounded-2xl p-12 text-center flex flex-col items-center justify-center min-h-[300px]">
                             <div className="p-4 bg-slate-800 rounded-full mb-4"><AccessTimeIcon className="text-slate-500 text-4xl" /></div>
                             <h3 className="text-xl font-bold text-slate-300">Prêt pour l'analyse</h3>
-                            <p className="text-slate-500 mt-2">Aucune donnée. Lancez une analyse pour voir les graphiques.</p>
+                            <p className="text-slate-500 mt-2">Aucune donnée analysée pour le moment.</p>
                         </div>
                     ) : (
                         <>
-                            <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl animate-fade-in">
+                            <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
                                 <h3 className="text-lg font-bold mb-6 flex items-center gap-2"><AnalyticsIcon className="text-cyan-500" /> Activité</h3>
                                 <div className="h-64">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -155,13 +177,13 @@ export default function Dashboard() {
                                             <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
                                             <XAxis dataKey="name" stroke="#94a3b8" tick={{fontSize: 12}} />
                                             <YAxis stroke="#94a3b8" tick={{fontSize: 12}} allowDecimals={false} />
-                                            <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#fff' }} cursor={{fill: '#334155', opacity: 0.4}} />
+                                            <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#fff' }} />
                                             <Bar dataKey="analyses" fill="#0ea5e9" radius={[4, 4, 0, 0]} barSize={40} />
                                         </BarChart>
                                     </ResponsiveContainer>
                                 </div>
                             </div>
-                            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col animate-fade-in">
+                            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col">
                                 <h3 className="text-lg font-bold mb-2">Diagnostics</h3>
                                 <div className="flex-grow h-64 relative">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -181,36 +203,19 @@ export default function Dashboard() {
                     )}
                 </div>
 
-                <h2 className="text-xl font-bold mb-6 flex items-center gap-2"><FolderSharedIcon className="text-slate-500" /> File d'attente</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {patients.map((patient) => (
-                    <div key={patient.id} className="group bg-slate-900 border border-slate-800 rounded-2xl p-6 hover:border-cyan-500/50 hover:shadow-2xl transition-all">
-                         <div className="flex justify-between items-start mb-4">
-                            <div>
-                                <h3 className="text-lg font-bold group-hover:text-cyan-400 transition-colors">{patient.name}</h3>
-                                <p className="text-slate-500 text-sm">Dossier #{patient.folder_id}</p>
-                            </div>
-                            <span className="bg-slate-800 text-slate-300 px-3 py-1 rounded-full text-xs font-mono">{patient.age} ans</span>
-                         </div>
-                         <div className="flex items-center gap-3 mb-6">
-                            {patient.biopsies.length > 0 ? patient.biopsies.map(biopsy => (
-                                <span key={biopsy.id} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${biopsy.status === "Validé" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : biopsy.status === "À vérifier" ? "bg-red-500/10 text-red-400 border-red-500/20" : "bg-slate-700/30 text-slate-400 border-slate-700"}`}>
-                                    {biopsy.status}
-                                </span>
-                            )) : <span className="text-slate-600 text-sm italic">Aucune biopsie</span>}
-                         </div>
-                         {patient.biopsies.length > 0 && (
-                          <button 
-                            onClick={() => navigate('/viewer', { state: { patientName: patient.name, folderId: patient.folder_id, image_url: patient.biopsies[0].image_url } })}
-                            className="w-full py-3 rounded-xl bg-slate-800 text-slate-300 font-medium hover:bg-cyan-600 hover:text-white transition-all flex items-center justify-center gap-2"
-                          >
-                            <SmartToyIcon fontSize="small" />
-                            {patient.biopsies[0].status === "Non analysé" ? "Lancer l'analyse" : "Revoir l'analyse"}
-                          </button>
-                         )}
+                <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
+                    <FolderSharedIcon className="text-slate-500" /> File d'attente
+                </h2>
+                
+                {patients.length === 0 ? (
+                    <div className="text-center p-10 border border-slate-800 border-dashed rounded-xl text-slate-500">Aucun patient trouvé.</div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {patients.map((patient) => (
+                        <PatientCard key={patient.id} patient={patient} />
+                      ))}
                     </div>
-                  ))}
-                </div>
+                )}
             </>
         )}
       </div>
