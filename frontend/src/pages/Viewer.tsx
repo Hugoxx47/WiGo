@@ -7,7 +7,6 @@ import domtoimage from 'dom-to-image';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import SaveAsIcon from '@mui/icons-material/SaveAs';
 import CropSquareIcon from '@mui/icons-material/CropSquare';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import PolylineIcon from '@mui/icons-material/Polyline';
@@ -15,6 +14,7 @@ import PanToolIcon from '@mui/icons-material/PanTool';
 import TextFieldsIcon from '@mui/icons-material/TextFields';
 import UndoIcon from '@mui/icons-material/Undo';
 import CameraAltIcon from '@mui/icons-material/CameraAlt'; 
+import DescriptionIcon from '@mui/icons-material/Description'; // Icon for form
 
 type ToolType = 'move' | 'rect' | 'circle' | 'polygon' | 'text';
 
@@ -42,12 +42,31 @@ export default function Viewer() {
 
   const [loading, setLoading] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false); 
+  const [isReadOnly, setIsReadOnly] = useState(false);
   
-  // --- ETATS DU FORMULAIRE MÉDICAL ---
-  const [labelInput, setLabelInput] = useState("Extraction"); // Nom du fichier
-  const [birthDate, setBirthDate] = useState(location.state?.birthDate || "");
-  const [familyHistory, setFamilyHistory] = useState(location.state?.familyHistory || "Non");
-  const [medicalHistory, setMedicalHistory] = useState(location.state?.medicalHistory || "");
+  // --- ÉTATS DU FORMULAIRE MÉDICAL COMPLET (Basé sur vos images) ---
+  // 1. Informations sur le prélèvement
+  const [prelevementType, setPrelevementType] = useState("fine");
+  const [prelevementDate, setPrelevementDate] = useState("");
+  const [blockNumber, setBlockNumber] = useState("");
+  const [fixation, setFixation] = useState("formol");
+  const [slideCount, setSlideCount] = useState<number | ''>('');
+  const [staining, setStaining] = useState<string[]>([]); // Multi-select logic needed or simple comma text
+
+  // 2. Analyse Pathologique
+  const [macroObs, setMacroObs] = useState("");
+  const [microObs, setMicroObs] = useState("");
+  const [histoType, setHistoType] = useState("canalaire");
+  const [sbrGrade, setSbrGrade] = useState("1");
+  const [margins, setMargins] = useState("");
+  const [hormonalReceptors, setHormonalReceptors] = useState("");
+  const [diagnosis, setDiagnosis] = useState("benin");
+  const [comments, setComments] = useState("");
+
+  // 3. Traçabilité
+  const [status, setStatus] = useState("en_analyse");
+  const [pathologist, setPathologist] = useState("");
+  const [validationDate, setValidationDate] = useState("");
   // ------------------------------------
 
   const [currentTool, setCurrentTool] = useState<ToolType>('move');
@@ -150,7 +169,7 @@ export default function Viewer() {
       }
   };
 
-  const confirmText = () => { if (pendingTextPos && textValue.trim() !== "") { const newText: Shape = { type: 'text', x: pendingTextPos.x, y: pendingTextPos.y, text: textValue }; setShapes(prev => [...prev, newText]); setLabelInput(textValue); } setPendingTextPos(null); setCurrentTool('move'); };
+  const confirmText = () => { if (pendingTextPos && textValue.trim() !== "") { const newText: Shape = { type: 'text', x: pendingTextPos.x, y: pendingTextPos.y, text: textValue }; setShapes(prev => [...prev, newText]); } setPendingTextPos(null); setCurrentTool('move'); };
   const handleUndo = () => setShapes(prev => prev.slice(0, -1));
   const handleClear = () => { setShapes([]); setTempShape(null); setPolyPoints([]); setPendingTextPos(null); setCurrentTool('move'); setShowSaveModal(false); };
 
@@ -182,7 +201,7 @@ export default function Viewer() {
             const finalW = Math.round(Math.abs(p2.x - p1.x));
             const finalH = Math.round(Math.abs(p2.y - p1.y));
             
-            const finalLabel = shape.type === 'text' && shape.text ? shape.text : labelInput;
+            const finalLabel = shape.type === 'text' && shape.text ? shape.text : "Extraction";
 
             const payload = {
                 filename: defaultDziFilename || "biopsie_cmu_1.dzi",
@@ -190,10 +209,24 @@ export default function Viewer() {
                 patient_folder: folderId, patient_name: patientName, annotation_label: finalLabel,
                 extraction_id: extractionId, w: finalW, h: finalH, label: finalLabel,
                 
-                // NOUVELLES DONNÉES ENVOYÉES AU BACKEND
-                birth_date: birthDate,
-                family_history: familyHistory,
-                medical_history: medicalHistory
+                // DONNÉES DU FORMULAIRE MÉDICAL (Pour le backend)
+                prelevement_type: prelevementType,
+                prelevement_date: prelevementDate,
+                block_number: blockNumber,
+                fixation: fixation,
+                slide_count: slideCount,
+                staining: staining, // Send as array or joined string
+                macro_obs: macroObs,
+                micro_obs: microObs,
+                histo_type: histoType,
+                sbr_grade: sbrGrade,
+                margins: margins,
+                hormonal_receptors: hormonalReceptors,
+                diagnosis: diagnosis,
+                comments: comments,
+                status: status,
+                pathologist: pathologist,
+                validation_date: validationDate
             };
 
             const url = isAnnotationMode ? `${baseUrl}/annotations/save` : `${baseUrl}/extract-roi`;
@@ -207,11 +240,52 @@ export default function Viewer() {
       finally { setLoading(false); setShowSaveModal(false); }
   };
 
+  const handleStainingChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const options = Array.from(e.target.selectedOptions, option => option.value);
+    setStaining(options);
+  };
+
+  useEffect(() => {
+      // Si on a un extractionId (donc on vient du Dashboard pour voir un dossier existant)
+      if (extractionId) {
+          setLoading(true);
+          const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+          
+          fetch(`${baseUrl}/extractions/${extractionId}/details`)
+              .then(res => res.json())
+              .then(data => {
+                  // On remplit tous les champs du formulaire avec ce qui vient de la BDD
+                  setLabelInput(data.filename || "");
+                  setPrelevementType(data.prelevement_type || "fine");
+                  setPrelevementDate(data.prelevement_date || "");
+                  setBlockNumber(data.block_number || "");
+                  setFixation(data.fixation || "formol");
+                  setSlideCount(data.slide_count || "");
+                  setStaining(data.staining || []);
+                  setMacroObs(data.macro_obs || "");
+                  setMicroObs(data.micro_obs || "");
+                  setHistoType(data.histo_type || "canalaire");
+                  setSbrGrade(data.sbr_grade || "1");
+                  setMargins(data.margins || "");
+                  setHormonalReceptors(data.hormonal_receptors || "");
+                  setDiagnosis(data.diagnosis || "benin");
+                  setComments(data.comments || "");
+                  setStatus(data.status || "en_analyse");
+                  setPathologist(data.pathologist || "");
+                  setValidationDate(data.validation_date || "");
+                  
+                  setIsReadOnly(true);
+              })
+              .catch(err => console.error("Erreur chargement dossier:", err))
+              .finally(() => setLoading(false));
+      }
+  }, [extractionId]);
+
   return (
     <div ref={containerRef} className="h-screen w-screen bg-black overflow-hidden relative font-sans text-white select-none">
       <div id="openseadragon-viewer" className="absolute inset-0 z-0 bg-black" />
 
-      {/* ZONE DESSIN (SVG) - Inchangée */}
+      {/* ZONE DESSIN (SVG) */}
       <div className={`absolute inset-0 z-10 ${currentTool === 'move' && !pendingTextPos ? 'pointer-events-none' : 'cursor-crosshair pointer-events-auto'}`}
         onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onDoubleClick={handleDoubleClick}>
         <svg className="w-full h-full pointer-events-none">
@@ -235,7 +309,7 @@ export default function Viewer() {
         )}
       </div>
 
-      {/* HEADER & OUTILS - Inchangés */}
+      {/* HEADER & OUTILS */}
       <div className="absolute top-0 left-0 w-full p-4 z-20 pointer-events-none flex justify-between items-start" data-html2canvas-ignore="true">
          <div className="pointer-events-auto bg-slate-900/90 border border-slate-700 rounded-xl p-2 flex items-center gap-4">
             <button onClick={() => navigate('/dashboard')} className="p-2 hover:bg-white/10 rounded-lg"><ArrowBackIcon /></button>
@@ -244,7 +318,6 @@ export default function Viewer() {
                 <div className="text-xs text-slate-400">ID: {folderId}</div>
             </div>
          </div>
-         {/* ... (Barre d'outils inchangée) ... */}
          <div className="pointer-events-auto bg-slate-800 border border-slate-600 rounded-xl p-1 flex gap-1 shadow-2xl">
             <button onClick={() => setCurrentTool('move')} className={`p-3 rounded-lg ${currentTool === 'move' ? 'bg-slate-600 text-white' : 'text-slate-400'}`}><PanToolIcon /></button>
             <div className="w-px bg-slate-600 mx-1"></div>
@@ -263,65 +336,154 @@ export default function Viewer() {
             {shapes.length > 0 && <button onClick={handleUndo} className="p-3 bg-slate-700 text-white border border-slate-500 rounded-xl hover:bg-slate-600"><UndoIcon /></button>}
             {(shapes.length > 0 || polyPoints.length > 0) && <button onClick={handleClear} className="p-3 bg-red-500/20 text-red-400 border border-red-500 rounded-xl"><DeleteForeverIcon /></button>}
             {shapes.length > 0 && currentTool === 'move' && (
-                <button onClick={() => setShowSaveModal(true)} className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-bold flex items-center gap-2 shadow-lg hover:scale-105"><CheckCircleIcon /> Sauvegarder</button>
+                <button onClick={() => setShowSaveModal(true)} className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-bold flex items-center gap-2 shadow-lg hover:scale-105"><DescriptionIcon /> Formulaire</button>
             )}
          </div>
       </div>
 
-      {/* --- NOUVEAU MODAL TYPE "DOSSIER PATIENT" --- */}
+      {/* --- FORMULAIRE COMPLET (SCROLLABLE MODAL) --- */}
       {showSaveModal && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md pointer-events-auto">
-              <div className="bg-slate-900 border border-slate-600 p-6 rounded-2xl w-[500px] shadow-2xl">
-                  <div className="flex items-center gap-3 mb-6 border-b border-slate-700 pb-4">
-                      <div className="bg-blue-500 w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg">{patientName.charAt(0)}</div>
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md pointer-events-auto p-4 overflow-hidden">
+              <div className="bg-slate-900 border border-slate-600 rounded-2xl w-[900px] h-[90%] shadow-2xl flex flex-col">
+                  {/* Modal Header */}
+                  <div className="flex items-center gap-4 p-6 border-b border-slate-700 bg-slate-800 rounded-t-2xl">
+                      <div className="bg-emerald-500 w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl">{patientName.charAt(0)}</div>
                       <div>
-                          <h2 className="text-xl font-bold text-white">Dossier Médical</h2>
-                          <div className="text-sm text-slate-400">ID: {folderId}</div>
+                          <h2 className="text-2xl font-bold text-white">Formulaire de Biopsie Mammaire</h2>
+                          <div className="text-sm text-slate-400">Patient: {patientName} (ID: {folderId})</div>
                       </div>
                   </div>
 
-                  <div className="space-y-4">
-                      {/* LIGNE 1 : Nom et Date de naissance */}
-                      <div className="flex gap-4">
-                          <div className="flex-1">
-                              <label className="block text-xs text-slate-400 mb-1">Nom / Prénom</label>
-                              <input type="text" value={patientName} disabled className="w-full bg-slate-800/50 border border-slate-700 rounded p-2 text-slate-300 cursor-not-allowed" />
+                  {/* Scrollable Content */}
+                  <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+                      
+                      {/* SECTION 1: Informations sur le prélèvement */}
+                      <section className="space-y-4">
+                          <h3 className="text-lg font-bold text-emerald-400 border-b border-slate-700 pb-2">1. Informations sur le prélèvement</h3>
+                          <div className="grid grid-cols-2 gap-6">
+                              <div>
+                                  <label className="block text-xs text-slate-400 mb-1">Type de prélèvement</label>
+                                  <select value={prelevementType} onChange={(e) => setPrelevementType(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-emerald-500">
+                                      <option value="fine">Aiguille fine</option>
+                                      <option value="core">Core biopsy</option>
+                                      <option value="exerese">Exérèse</option>
+                                  </select>
+                              </div>
+                              <div>
+                                  <label className="block text-xs text-slate-400 mb-1">Date du prélèvement</label>
+                                  <input type="date" value={prelevementDate} onChange={(e) => setPrelevementDate(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-emerald-500" />
+                              </div>
+                              <div>
+                                  <label className="block text-xs text-slate-400 mb-1">Numéro du bloc</label>
+                                  <input type="text" value={blockNumber} onChange={(e) => setBlockNumber(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-emerald-500" placeholder="Ex: B-2023-123" />
+                              </div>
+                              <div>
+                                  <label className="block text-xs text-slate-400 mb-1">Fixation</label>
+                                  <select value={fixation} onChange={(e) => setFixation(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-emerald-500">
+                                      <option value="formol">Formol</option>
+                                      <option value="autre">Autre</option>
+                                  </select>
+                              </div>
+                              <div>
+                                  <label className="block text-xs text-slate-400 mb-1">Nombre de lames</label>
+                                  <input type="number" value={slideCount} onChange={(e) => setSlideCount(parseInt(e.target.value))} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-emerald-500" />
+                              </div>
+                              <div>
+                                  <label className="block text-xs text-slate-400 mb-1">Coloration (Multiple)</label>
+                                  <select multiple value={staining} onChange={handleStainingChange} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-emerald-500 h-24">
+                                      <option value="HE">H&E</option>
+                                      <option value="IHC">IHC</option>
+                                      <option value="HER2">HER2</option>
+                                      <option value="ER">ER</option>
+                                      <option value="PR">PR</option>
+                                  </select>
+                                  <div className="text-[10px] text-slate-500 mt-1">Ctrl+Click pour sélection multiple</div>
+                              </div>
                           </div>
-                          <div className="flex-1">
-                              <label className="block text-xs text-slate-400 mb-1">Date de naissance</label>
-                              <input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-blue-500 outline-none" />
+                      </section>
+
+                      {/* SECTION 2: Analyse Pathologique */}
+                      <section className="space-y-4">
+                          <h3 className="text-lg font-bold text-blue-400 border-b border-slate-700 pb-2">2. Analyse Pathologique</h3>
+                          <div className="space-y-4">
+                              <div>
+                                  <label className="block text-xs text-slate-400 mb-1">Observations Macroscopiques</label>
+                                  <textarea rows={2} value={macroObs} onChange={(e) => setMacroObs(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-blue-500" placeholder="Taille, forme, texture..."></textarea>
+                              </div>
+                              <div>
+                                  <label className="block text-xs text-slate-400 mb-1">Observations Microscopiques</label>
+                                  <textarea rows={2} value={microObs} onChange={(e) => setMicroObs(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-blue-500" placeholder="Morphologie des cellules..."></textarea>
+                              </div>
+                              <div className="grid grid-cols-2 gap-6">
+                                  <div>
+                                      <label className="block text-xs text-slate-400 mb-1">Type Histologique</label>
+                                      <select value={histoType} onChange={(e) => setHistoType(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-blue-500">
+                                          <option value="canalaire">Carcinome Canalaire</option>
+                                          <option value="lobulaire">Carcinome Lobulaire</option>
+                                          <option value="autre">Autre</option>
+                                      </select>
+                                  </div>
+                                  <div>
+                                      <label className="block text-xs text-slate-400 mb-1">Grade SBR</label>
+                                      <select value={sbrGrade} onChange={(e) => setSbrGrade(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-blue-500">
+                                          <option value="1">1</option>
+                                          <option value="2">2</option>
+                                          <option value="3">3</option>
+                                      </select>
+                                  </div>
+                                  <div>
+                                      <label className="block text-xs text-slate-400 mb-1">Marges chirurgicales</label>
+                                      <input type="text" value={margins} onChange={(e) => setMargins(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-blue-500" placeholder="Saines / Envahies" />
+                                  </div>
+                                  <div>
+                                      <label className="block text-xs text-slate-400 mb-1">Récepteurs Hormonaux</label>
+                                      <input type="text" value={hormonalReceptors} onChange={(e) => setHormonalReceptors(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-blue-500" placeholder="ER+, PR+, HER2..." />
+                                  </div>
+                              </div>
+                              <div>
+                                  <label className="block text-xs text-slate-400 mb-1">Diagnostic Final</label>
+                                  <select value={diagnosis} onChange={(e) => setDiagnosis(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-blue-500 font-bold">
+                                      <option value="benin">Bénin</option>
+                                      <option value="malin">Malin</option>
+                                      <option value="cis">Carcinome in situ (CIS)</option>
+                                  </select>
+                              </div>
+                              <div>
+                                  <label className="block text-xs text-slate-400 mb-1">Commentaires</label>
+                                  <textarea rows={2} value={comments} onChange={(e) => setComments(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-blue-500"></textarea>
+                              </div>
                           </div>
-                      </div>
+                      </section>
 
-                      {/* LIGNE 2 : Antécédents familiaux */}
-                      <div>
-                          <label className="block text-xs text-slate-400 mb-1">Antécédents familiaux de cancer du sein</label>
-                          <select value={familyHistory} onChange={(e) => setFamilyHistory(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-blue-500 outline-none">
-                              <option value="Non">Non</option>
-                              <option value="Oui">Oui</option>
-                              <option value="Inconnu">Inconnu</option>
-                          </select>
-                      </div>
-
-                      {/* LIGNE 3 : Antécédents médicaux */}
-                      <div>
-                          <label className="block text-xs text-slate-400 mb-1">Antécédents médicaux</label>
-                          <textarea rows={3} value={medicalHistory} onChange={(e) => setMedicalHistory(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-blue-500 outline-none resize-none" placeholder="Ex: Hypertension, Diabète..."></textarea>
-                      </div>
-
-                      {/* LIGNE 4 : Nom de l'extraction (si extraction) */}
-                      {!isAnnotationMode && (
-                        <div>
-                            <label className="block text-xs text-slate-400 mb-1">Label de l'extraction</label>
-                            <input type="text" value={labelInput} onChange={(e) => setLabelInput(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-emerald-500 outline-none" />
-                        </div>
-                      )}
+                      {/* SECTION 3: Traçabilité */}
+                      <section className="space-y-4">
+                          <h3 className="text-lg font-bold text-purple-400 border-b border-slate-700 pb-2">3. Traçabilité et Suivi</h3>
+                          <div className="grid grid-cols-2 gap-6">
+                              <div>
+                                  <label className="block text-xs text-slate-400 mb-1">Statut</label>
+                                  <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-purple-500">
+                                      <option value="en_analyse">En analyse</option>
+                                      <option value="termine">Terminé</option>
+                                      <option value="archive">Archivé</option>
+                                  </select>
+                              </div>
+                              <div>
+                                  <label className="block text-xs text-slate-400 mb-1">Pathologiste Responsable</label>
+                                  <input type="text" value={pathologist} onChange={(e) => setPathologist(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-purple-500" placeholder="Dr..." />
+                              </div>
+                              <div>
+                                  <label className="block text-xs text-slate-400 mb-1">Date de validation</label>
+                                  <input type="date" value={validationDate} onChange={(e) => setValidationDate(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white outline-none focus:border-purple-500" />
+                              </div>
+                          </div>
+                      </section>
                   </div>
 
-                  <div className="flex gap-3 mt-8">
-                      <button onClick={() => setShowSaveModal(false)} className="flex-1 py-3 rounded-lg bg-slate-800 text-slate-400 hover:bg-slate-700 transition">Annuler</button>
-                      <button onClick={handleSaveAction} disabled={loading} className="flex-1 py-3 rounded-lg bg-emerald-600 text-white font-bold hover:bg-emerald-500 transition shadow-lg">
-                          {loading ? "Enregistrement..." : "Valider le dossier"}
+                  {/* Footer Actions */}
+                  <div className="p-6 border-t border-slate-700 bg-slate-800 rounded-b-2xl flex gap-3">
+                      <button onClick={() => setShowSaveModal(false)} className="flex-1 py-3 rounded-lg bg-slate-700 text-slate-300 hover:bg-slate-600 transition font-medium">Annuler</button>
+                      <button onClick={handleSaveAction} disabled={loading} className="flex-1 py-3 rounded-lg bg-emerald-600 text-white font-bold hover:bg-emerald-500 transition shadow-lg flex justify-center items-center gap-2">
+                          {loading ? "Enregistrement..." : <><CheckCircleIcon /> Valider le formulaire</>}
                       </button>
                   </div>
               </div>

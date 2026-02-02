@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text, JSON
 from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
@@ -7,13 +7,13 @@ class Patient(Base):
     __tablename__ = "patients"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
-    age = Column(Integer) # On garde l'âge pour l'affichage rapide
+    age = Column(Integer)
     folder_id = Column(String)
     
-    # --- NOUVEAUX CHAMPS (Selon ton image) ---
-    birth_date = Column(String)  # Ex: "12/05/1958"
-    family_history = Column(String) # Ex: "Oui" (Cancer du sein)
-    medical_history = Column(Text) # Ex: "Hypertension, Diabète..."
+    # Infos générales patient
+    birth_date = Column(String)
+    family_history = Column(String)
+    medical_history = Column(Text)
 
     biopsies = relationship("Biopsy", back_populates="patient", cascade="all, delete")
     extractions = relationship("Extraction", back_populates="patient", cascade="all, delete")
@@ -31,15 +31,38 @@ class Extraction(Base):
     id = Column(Integer, primary_key=True, index=True)
     patient_id = Column(Integer, ForeignKey("patients.id"))
     
+    # Infos techniques ROI
     label = Column(String)
     dzi_url = Column(String) 
-    
     x = Column(Integer, default=0)
     y = Column(Integer, default=0)
     w = Column(Integer, default=0)
     h = Column(Integer, default=0)
-    
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # --- NOUVEAUX CHAMPS (Ton formulaire médical complet) ---
+    # 1. Prélèvement
+    prelevement_type = Column(String, nullable=True)
+    prelevement_date = Column(String, nullable=True)
+    block_number = Column(String, nullable=True)
+    fixation = Column(String, nullable=True)
+    slide_count = Column(Integer, nullable=True)
+    staining = Column(JSON, nullable=True) # Liste de colorations
+
+    # 2. Analyse Pathologique
+    macro_obs = Column(Text, nullable=True)
+    micro_obs = Column(Text, nullable=True)
+    histo_type = Column(String, nullable=True)
+    sbr_grade = Column(String, nullable=True)
+    margins = Column(String, nullable=True)
+    hormonal_receptors = Column(String, nullable=True)
+    diagnosis = Column(String, nullable=True)
+    comments = Column(Text, nullable=True)
+
+    # 3. Traçabilité
+    status = Column(String, nullable=True)
+    pathologist = Column(String, nullable=True)
+    validation_date = Column(String, nullable=True)
 
     patient = relationship("Patient", back_populates="extractions")
     drawings = relationship("Drawing", back_populates="extraction", cascade="all, delete")

@@ -1,19 +1,20 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
+import os
 
-SQLALCHEMY_DATABASE_URL = "postgresql://user:password@postgres:5432/biopsie_db"
+POSTGRES_USER = "user"
+POSTGRES_PASSWORD = "password"
+POSTGRES_SERVER = "p6_postgres" 
+POSTGRES_DB = "p6_db"
 
-# Création du moteur
+SQLALCHEMY_DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_SERVER}:5432/{POSTGRES_DB}"
+
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
-
-# Création de la session
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Base pour les modèles
 Base = declarative_base()
 
-# Fonction utilitaire pour récupérer la DB
 def get_db():
     db = SessionLocal()
     try:
