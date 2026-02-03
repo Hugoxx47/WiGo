@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text, JSON
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text, Float, JSON
 from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
@@ -10,7 +10,6 @@ class Patient(Base):
     age = Column(Integer)
     folder_id = Column(String)
     
-    # Infos générales patient
     birth_date = Column(String)
     family_history = Column(String)
     medical_history = Column(Text)
@@ -31,7 +30,6 @@ class Extraction(Base):
     id = Column(Integer, primary_key=True, index=True)
     patient_id = Column(Integer, ForeignKey("patients.id"))
     
-    # Infos techniques ROI
     label = Column(String)
     dzi_url = Column(String) 
     x = Column(Integer, default=0)
@@ -40,7 +38,7 @@ class Extraction(Base):
     h = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # --- CHAMPS FORMULAIRE MÉDICAL ---
+    # Formulaire Médical
     prelevement_type = Column(String, nullable=True)
     prelevement_date = Column(String, nullable=True)
     block_number = Column(String, nullable=True)
@@ -62,16 +60,21 @@ class Extraction(Base):
     validation_date = Column(String, nullable=True)
 
     patient = relationship("Patient", back_populates="extractions")
+    # Relation vers les dessins
     drawings = relationship("Drawing", back_populates="extraction", cascade="all, delete")
 
 class Drawing(Base):
     __tablename__ = "drawings"
     id = Column(Integer, primary_key=True, index=True)
     extraction_id = Column(Integer, ForeignKey("extractions.id"))
-    x = Column(Integer)
-    y = Column(Integer)
-    w = Column(Integer)
-    h = Column(Integer)
-    label = Column(String)
+    
+    type = Column(String)  # 'rect', 'circle', 'polygon', 'text'
+    x = Column(Float)
+    y = Column(Float)
+    w = Column(Float, nullable=True)
+    h = Column(Float, nullable=True)
+    radius = Column(Float, nullable=True)
+    text = Column(String, nullable=True)
+    points = Column(JSON, nullable=True) 
     
     extraction = relationship("Extraction", back_populates="drawings")

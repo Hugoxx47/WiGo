@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles 
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 import models
 import database
 
@@ -29,7 +29,6 @@ os.makedirs(DZI_FOLDER, exist_ok=True)
 app.mount("/dzi_data", StaticFiles(directory=DZI_FOLDER), name="dzi_data")
 
 # --- SCHEMAS ---
-# 1. D'abord BiopsySchema
 class BiopsySchema(BaseModel):
     id: int
     image_url: Optional[str] = None
@@ -37,7 +36,6 @@ class BiopsySchema(BaseModel):
     class Config:
         from_attributes = True
 
-# 2. Ensuite PatientSchema (qui utilise BiopsySchema)
 class PatientSchema(BaseModel):
     id: int
     name: str
@@ -46,14 +44,21 @@ class PatientSchema(BaseModel):
     birth_date: Optional[str] = None
     family_history: Optional[str] = None
     medical_history: Optional[str] = None
-    
-    # La liste des biopsies est indispensable pour le Dashboard
     biopsies: List[BiopsySchema] = [] 
-    
     class Config:
         from_attributes = True 
 
-# 3. Payload pour la sauvegarde
+# Schéma pour un dessin
+class DrawingSchema(BaseModel):
+    type: str
+    x: float
+    y: float
+    w: Optional[float] = 0
+    h: Optional[float] = 0
+    radius: Optional[float] = 0
+    text: Optional[str] = ""
+    points: Optional[List[Dict[str, float]]] = []
+
 class AnalysisPayload(BaseModel):
     filename: str
     x: int
@@ -65,66 +70,67 @@ class AnalysisPayload(BaseModel):
     annotation_label: str 
     extraction_id: Optional[int] = None
 
-    # Infos Patient
-    birth_date: Optional[str] = None
-    family_history: Optional[str] = None
-    medical_history: Optional[str] = None
+    # Champs Formulaire
+    birth_date: Optional[str] = ""
+    family_history: Optional[str] = ""
+    medical_history: Optional[str] = ""
+    prelevement_type: Optional[str] = ""
+    prelevement_date: Optional[str] = ""
+    block_number: Optional[str] = ""
+    fixation: Optional[str] = ""
+    slide_count: Optional[Any] = None 
+    staining: Optional[List[str]] = []
+    macro_obs: Optional[str] = ""
+    micro_obs: Optional[str] = ""
+    histo_type: Optional[str] = ""
+    sbr_grade: Optional[str] = ""
+    margins: Optional[str] = ""
+    hormonal_receptors: Optional[str] = ""
+    diagnosis: Optional[str] = ""
+    comments: Optional[str] = ""
+    status: Optional[str] = ""
+    pathologist: Optional[str] = ""
+    validation_date: Optional[str] = ""
 
-    # Formulaire Médical
-    prelevement_type: Optional[str] = None
-    prelevement_date: Optional[str] = None
-    block_number: Optional[str] = None
-    fixation: Optional[str] = None
-    slide_count: Optional[int] = None
-    staining: Optional[List[str]] = None
-    macro_obs: Optional[str] = None
-    micro_obs: Optional[str] = None
-    histo_type: Optional[str] = None
-    sbr_grade: Optional[str] = None
-    margins: Optional[str] = None
-    hormonal_receptors: Optional[str] = None
-    diagnosis: Optional[str] = None
-    comments: Optional[str] = None
-    status: Optional[str] = None
-    pathologist: Optional[str] = None
-    validation_date: Optional[str] = None
+    # LISTE DES DESSINS
+    drawings: List[DrawingSchema] = []
 
 # --- ROUTES ---
+
 @app.post("/seed")
 def seed_database(db: Session = Depends(database.get_db)):
     try:
-        db.query(models.Drawing).delete()
-        db.query(models.Extraction).delete()
-        db.query(models.Biopsy).delete()
-        db.query(models.Patient).delete()
-        db.commit()
-    except Exception:
-        db.rollback()
-
-    patients_data = [
-        {"name": "Jean Dupont", "age": 65, "folder": "CMU-1", "birth": "1958-05-12", "family": "Non", "med": "Hypertension"},
-        {"name": "Marie Curie", "age": 58, "folder": "CASE-2", "birth": "1965-11-07", "family": "Oui", "med": "Suivi annuel"},
-        {"name": "Paul Martin", "age": 42, "folder": "X-99", "birth": "1982-02-23", "family": "Non", "med": "RAS"}
-    ]
-    
-    default_image = "biopsie_cmu_1.dzi"
-    
-    count = 0
-    for p in patients_data:
-        patient = models.Patient(
-            name=p["name"], age=p["age"], folder_id=p["folder"],
-            birth_date=p["birth"], family_history=p["family"], medical_history=p["med"]
-        )
-        db.add(patient)
-        db.commit()
-        db.refresh(patient)
+        # On drop tout pour être sûr que la table drawings est créée avec la bonne structure
+        models.Base.metadata.drop_all(bind=database.engine)
+        models.Base.metadata.create_all(bind=database.engine)
         
-        biopsy = models.Biopsy(patient_id=patient.id, image_url=default_image, status="Non analysé")
-        db.add(biopsy)
-        count += 1
-    
-    db.commit()
-    return {"message": f"Succès ! {count} patients ajoutés."}
+        patients_data = [
+            {"name": "Jean Dupont", "age": 65, "folder": "CMU-1", "birth": "1958-05-12", "family": "Non", "med": "Hypertension"},
+            {"name": "Marie Curie", "age": 58, "folder": "CASE-2", "birth": "1965-11-07", "family": "Oui", "med": "Suivi annuel"},
+            {"name": "Paul Martin", "age": 42, "folder": "X-99", "birth": "1982-02-23", "family": "Non", "med": "RAS"}
+        ]
+        
+        default_image = "biopsie_cmu_1.dzi"
+        
+        count = 0
+        for p in patients_data:
+            patient = models.Patient(
+                name=p["name"], age=p["age"], folder_id=p["folder"],
+                birth_date=p["birth"], family_history=p["family"], medical_history=p["med"]
+            )
+            db.add(patient)
+            db.commit()
+            db.refresh(patient)
+            
+            biopsy = models.Biopsy(patient_id=patient.id, image_url=default_image, status="Non analysé")
+            db.add(biopsy)
+            count += 1
+        
+        db.commit()
+        return {"message": f"Succès ! BDD Réinitialisée avec {count} patients."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/patients", response_model=List[PatientSchema])
 def get_patients(db: Session = Depends(database.get_db)):
@@ -161,6 +167,8 @@ def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
         except Exception as e:
             print(f"⚠️ Erreur extraction: {e}")
 
+    sc = data.slide_count if isinstance(data.slide_count, int) else None
+
     new_ext = models.Extraction(
         patient_id=patient.id,
         label=data.annotation_label,
@@ -170,7 +178,7 @@ def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
         prelevement_date=data.prelevement_date,
         block_number=data.block_number,
         fixation=data.fixation,
-        slide_count=data.slide_count,
+        slide_count=sc,
         staining=data.staining,
         macro_obs=data.macro_obs,
         micro_obs=data.micro_obs,
@@ -198,11 +206,14 @@ def update_analysis(data: AnalysisPayload, db: Session = Depends(database.get_db
     if not ext:
         raise HTTPException(status_code=404, detail="Dossier introuvable")
 
+    sc = data.slide_count if isinstance(data.slide_count, int) else None
+
+    # Mise à jour formulaire
     ext.prelevement_type = data.prelevement_type
     ext.prelevement_date = data.prelevement_date
     ext.block_number = data.block_number
     ext.fixation = data.fixation
-    ext.slide_count = data.slide_count
+    ext.slide_count = sc
     ext.staining = data.staining
     ext.macro_obs = data.macro_obs
     ext.micro_obs = data.micro_obs
@@ -216,8 +227,22 @@ def update_analysis(data: AnalysisPayload, db: Session = Depends(database.get_db
     ext.pathologist = data.pathologist
     ext.validation_date = data.validation_date
     
+    # GESTION DES DESSINS : Suppression anciens -> Ajout nouveaux
+    db.query(models.Drawing).filter(models.Drawing.extraction_id == ext.id).delete()
+    
+    for d in data.drawings:
+        new_draw = models.Drawing(
+            extraction_id=ext.id,
+            type=d.type,
+            x=d.x, y=d.y, w=d.w, h=d.h,
+            radius=d.radius,
+            text=d.text,
+            points=d.points
+        )
+        db.add(new_draw)
+
     db.commit()
-    return {"message": "Dossier mis à jour"}
+    return {"message": "Dossier et annotations mis à jour"}
 
 @app.get("/patients/{folder_id}/extractions")
 def get_extractions(folder_id: str, db: Session = Depends(database.get_db)):
@@ -239,6 +264,7 @@ def get_extractions(folder_id: str, db: Session = Depends(database.get_db)):
 def get_details(extraction_id: int, db: Session = Depends(database.get_db)):
     ext = db.query(models.Extraction).filter(models.Extraction.id == extraction_id).first()
     if not ext: raise HTTPException(status_code=404, detail="Non trouvé")
+    
     return {
         "id": ext.id,
         "filename": ext.label,
@@ -258,5 +284,13 @@ def get_details(extraction_id: int, db: Session = Depends(database.get_db)):
         "comments": ext.comments,
         "status": ext.status,
         "pathologist": ext.pathologist,
-        "validation_date": ext.validation_date
+        "validation_date": ext.validation_date,
+        # ON RENVOIE LES DESSINS
+        "drawings": [
+            {
+                "type": d.type, "x": d.x, "y": d.y, 
+                "w": d.w, "h": d.h, "radius": d.radius, 
+                "text": d.text, "points": d.points
+            } for d in ext.drawings
+        ]
     }
