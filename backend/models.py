@@ -40,16 +40,14 @@ class Extraction(Base):
     h = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # --- NOUVEAUX CHAMPS (Ton formulaire médical complet) ---
-    # 1. Prélèvement
+    # --- CHAMPS FORMULAIRE MÉDICAL ---
     prelevement_type = Column(String, nullable=True)
     prelevement_date = Column(String, nullable=True)
     block_number = Column(String, nullable=True)
     fixation = Column(String, nullable=True)
     slide_count = Column(Integer, nullable=True)
-    staining = Column(JSON, nullable=True) # Liste de colorations
+    staining = Column(JSON, nullable=True) 
 
-    # 2. Analyse Pathologique
     macro_obs = Column(Text, nullable=True)
     micro_obs = Column(Text, nullable=True)
     histo_type = Column(String, nullable=True)
@@ -59,7 +57,6 @@ class Extraction(Base):
     diagnosis = Column(String, nullable=True)
     comments = Column(Text, nullable=True)
 
-    # 3. Traçabilité
     status = Column(String, nullable=True)
     pathologist = Column(String, nullable=True)
     validation_date = Column(String, nullable=True)

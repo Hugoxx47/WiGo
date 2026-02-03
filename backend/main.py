@@ -1,8 +1,7 @@
 import time
 import os
-import shutil
 import pyvips
-from fastapi import FastAPI, Depends, Request, HTTPException
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles 
 from sqlalchemy.orm import Session
@@ -17,7 +16,6 @@ try:
     print("✅ Base de données connectée.")
 except Exception as e:
     print(f"❌ ERREUR FATALE BDD : {e}")
-    raise e
 
 app = FastAPI()
 
@@ -26,19 +24,37 @@ app.add_middleware(
     allow_methods=["*"], allow_headers=["*"],
 )
 
-@app.middleware("http")
-async def add_cors_header(request: Request, call_next):
-    response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    return response
-
-# Dossiers
 DZI_FOLDER = "/app/dzi_data"
 os.makedirs(DZI_FOLDER, exist_ok=True)
 app.mount("/dzi_data", StaticFiles(directory=DZI_FOLDER), name="dzi_data")
 
-# --- SCHEMAS (Mis à jour pour le formulaire) ---
-class ROIRequest(BaseModel):
+# --- SCHEMAS ---
+# 1. D'abord BiopsySchema
+class BiopsySchema(BaseModel):
+    id: int
+    image_url: Optional[str] = None
+    status: str
+    class Config:
+        from_attributes = True
+
+# 2. Ensuite PatientSchema (qui utilise BiopsySchema)
+class PatientSchema(BaseModel):
+    id: int
+    name: str
+    age: int
+    folder_id: str
+    birth_date: Optional[str] = None
+    family_history: Optional[str] = None
+    medical_history: Optional[str] = None
+    
+    # La liste des biopsies est indispensable pour le Dashboard
+    biopsies: List[BiopsySchema] = [] 
+    
+    class Config:
+        from_attributes = True 
+
+# 3. Payload pour la sauvegarde
+class AnalysisPayload(BaseModel):
     filename: str
     x: int
     y: int
@@ -47,13 +63,14 @@ class ROIRequest(BaseModel):
     patient_folder: str
     patient_name: str     
     annotation_label: str 
-    
-    # Infos Patient (Mise à jour dossier)
+    extraction_id: Optional[int] = None
+
+    # Infos Patient
     birth_date: Optional[str] = None
     family_history: Optional[str] = None
     medical_history: Optional[str] = None
 
-    # --- NOUVEAUX CHAMPS FORMULAIRE (Ceux du Viewer.tsx) ---
+    # Formulaire Médical
     prelevement_type: Optional[str] = None
     prelevement_date: Optional[str] = None
     block_number: Optional[str] = None
@@ -72,33 +89,7 @@ class ROIRequest(BaseModel):
     pathologist: Optional[str] = None
     validation_date: Optional[str] = None
 
-class DrawingRequest(BaseModel):
-    extraction_id: int
-    x: int
-    y: int
-    w: int
-    h: int
-    label: str
-
-class BiopsySchema(BaseModel):
-    id: int
-    image_url: str
-    status: str
-    class Config: from_attributes = True
-
-class PatientSchema(BaseModel):
-    id: int
-    name: str
-    age: int
-    folder_id: str
-    birth_date: Optional[str] = None
-    family_history: Optional[str] = None
-    medical_history: Optional[str] = None
-    biopsies: List[BiopsySchema] = [] 
-    class Config: from_attributes = True
-
 # --- ROUTES ---
-
 @app.post("/seed")
 def seed_database(db: Session = Depends(database.get_db)):
     try:
@@ -140,72 +131,93 @@ def get_patients(db: Session = Depends(database.get_db)):
     return db.query(models.Patient).all()
 
 @app.post("/extract-roi")
-def extract_roi(roi: ROIRequest, db: Session = Depends(database.get_db)):
-    # 1. On récupère ou crée le patient
-    patient = db.query(models.Patient).filter(models.Patient.folder_id == roi.patient_folder).first()
+def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
+    patient = db.query(models.Patient).filter(models.Patient.folder_id == data.patient_folder).first()
     if not patient:
-        patient = models.Patient(name=roi.patient_name, age=0, folder_id=roi.patient_folder)
+        patient = models.Patient(name=data.patient_name, age=0, folder_id=data.patient_folder)
         db.add(patient)
         db.commit()
         db.refresh(patient)
 
-    # 2. MISE À JOUR DES INFOS PATIENT
-    if roi.birth_date: patient.birth_date = roi.birth_date
-    if roi.family_history: patient.family_history = roi.family_history
-    if roi.medical_history: patient.medical_history = roi.medical_history
+    if data.birth_date: patient.birth_date = data.birth_date
+    if data.family_history: patient.family_history = data.family_history
+    if data.medical_history: patient.medical_history = data.medical_history
     db.commit()
 
-    # 3. GENERATION DU FICHIER SVS (Extraction physique)
-    safe_folder = "".join(c for c in roi.patient_folder if c.isalnum() or c in (' ', '-', '_')).strip()
+    safe_folder = "".join(c for c in data.patient_folder if c.isalnum() or c in (' ', '-', '_')).strip()
     patient_dir = os.path.join(DZI_FOLDER, safe_folder, "extractions")
     os.makedirs(patient_dir, exist_ok=True)
-    
     filename_str = f"extraction_{int(time.time())}.svs"
     output_path = os.path.join(patient_dir, filename_str)
-    source_path = "/app/CMU-1.svs" # Source par défaut pour le POC
+    source_path = "/app/CMU-1.svs"
 
-    # Tentative d'extraction réelle si le fichier source existe
     if os.path.exists(source_path):
         try:
             image = pyvips.Image.new_from_file(source_path, access="sequential")
-            safe_x = max(0, min(roi.x, image.width))
-            safe_y = max(0, min(roi.y, image.height))
-            region = image.extract_area(safe_x, safe_y, roi.width, roi.height)
+            safe_x = max(0, min(data.x, image.width))
+            safe_y = max(0, min(data.y, image.height))
+            region = image.extract_area(safe_x, safe_y, data.width, data.height)
             region.tiffsave(output_path, compression="jpeg", Q=90, tile=True, pyramid=True, bigtiff=True)
         except Exception as e:
-            print(f"⚠️ Erreur extraction image: {e}")
-            # On continue pour sauvegarder les données même si l'image plante
+            print(f"⚠️ Erreur extraction: {e}")
 
-    # 4. SAUVEGARDE EN BDD (Le rapport complet)
     new_ext = models.Extraction(
         patient_id=patient.id,
-        label=roi.annotation_label,
-        dzi_url=f"{safe_folder}/extractions/{filename_str}", # Chemin relatif pour le viewer
-        x=roi.x, y=roi.y, w=roi.width, h=roi.height,
-        
-        # Mapping des champs du formulaire
-        prelevement_type=roi.prelevement_type,
-        prelevement_date=roi.prelevement_date,
-        block_number=roi.block_number,
-        fixation=roi.fixation,
-        slide_count=roi.slide_count,
-        staining=roi.staining,
-        macro_obs=roi.macro_obs,
-        micro_obs=roi.micro_obs,
-        histo_type=roi.histo_type,
-        sbr_grade=roi.sbr_grade,
-        margins=roi.margins,
-        hormonal_receptors=roi.hormonal_receptors,
-        diagnosis=roi.diagnosis,
-        comments=roi.comments,
-        status=roi.status,
-        pathologist=roi.pathologist,
-        validation_date=roi.validation_date
+        label=data.annotation_label,
+        dzi_url=f"{safe_folder}/extractions/{filename_str}",
+        x=data.x, y=data.y, w=data.width, h=data.height,
+        prelevement_type=data.prelevement_type,
+        prelevement_date=data.prelevement_date,
+        block_number=data.block_number,
+        fixation=data.fixation,
+        slide_count=data.slide_count,
+        staining=data.staining,
+        macro_obs=data.macro_obs,
+        micro_obs=data.micro_obs,
+        histo_type=data.histo_type,
+        sbr_grade=data.sbr_grade,
+        margins=data.margins,
+        hormonal_receptors=data.hormonal_receptors,
+        diagnosis=data.diagnosis,
+        comments=data.comments,
+        status=data.status,
+        pathologist=data.pathologist,
+        validation_date=data.validation_date
     )
     db.add(new_ext)
     db.commit()
     
-    return {"message": "Dossier mis à jour et Zone sauvegardée", "id": new_ext.id, "file": filename_str}
+    return {"message": "Dossier créé avec succès", "id": new_ext.id}
+
+@app.post("/annotations/save")
+def update_analysis(data: AnalysisPayload, db: Session = Depends(database.get_db)):
+    if not data.extraction_id:
+        raise HTTPException(status_code=400, detail="ID extraction manquant")
+        
+    ext = db.query(models.Extraction).filter(models.Extraction.id == data.extraction_id).first()
+    if not ext:
+        raise HTTPException(status_code=404, detail="Dossier introuvable")
+
+    ext.prelevement_type = data.prelevement_type
+    ext.prelevement_date = data.prelevement_date
+    ext.block_number = data.block_number
+    ext.fixation = data.fixation
+    ext.slide_count = data.slide_count
+    ext.staining = data.staining
+    ext.macro_obs = data.macro_obs
+    ext.micro_obs = data.micro_obs
+    ext.histo_type = data.histo_type
+    ext.sbr_grade = data.sbr_grade
+    ext.margins = data.margins
+    ext.hormonal_receptors = data.hormonal_receptors
+    ext.diagnosis = data.diagnosis
+    ext.comments = data.comments
+    ext.status = data.status
+    ext.pathologist = data.pathologist
+    ext.validation_date = data.validation_date
+    
+    db.commit()
+    return {"message": "Dossier mis à jour"}
 
 @app.get("/patients/{folder_id}/extractions")
 def get_extractions(folder_id: str, db: Session = Depends(database.get_db)):
@@ -216,23 +228,17 @@ def get_extractions(folder_id: str, db: Session = Depends(database.get_db)):
         results.append({
             "id": e.id,
             "filename": e.label,
-            # Correction URL : pointer vers le fichier généré
-            "url": f"http://localhost:8000/dzi_data/{e.dzi_url}", 
+            "url": f"http://localhost:8000/dzi_data/{e.dzi_url}",
             "roi": { "x": e.x, "y": e.y, "w": e.w, "h": e.h },
-            "diagnosis": e.diagnosis, # On peut renvoyer le diagnostic pour l'afficher
+            "diagnosis": e.diagnosis,
             "status": e.status
         })
     return results
 
 @app.get("/extractions/{extraction_id}/details")
-def get_extraction_details(extraction_id: int, db: Session = Depends(database.get_db)):
-    # On cherche l'extraction par son ID
+def get_details(extraction_id: int, db: Session = Depends(database.get_db)):
     ext = db.query(models.Extraction).filter(models.Extraction.id == extraction_id).first()
-    
-    if not ext:
-        raise HTTPException(status_code=404, detail="Extraction introuvable")
-    
-    # On renvoie TOUT (y compris les champs médicaux)
+    if not ext: raise HTTPException(status_code=404, detail="Non trouvé")
     return {
         "id": ext.id,
         "filename": ext.label,
@@ -254,12 +260,3 @@ def get_extraction_details(extraction_id: int, db: Session = Depends(database.ge
         "pathologist": ext.pathologist,
         "validation_date": ext.validation_date
     }
-
-@app.post("/annotations/save")
-def save_drawing(draw: DrawingRequest, db: Session = Depends(database.get_db)):
-    db.add(models.Drawing(
-        extraction_id=draw.extraction_id,
-        x=draw.x, y=draw.y, w=draw.w, h=draw.h, label=draw.label
-    ))
-    db.commit()
-    return {"message": "Annotation enregistrée"}

@@ -2,8 +2,7 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
-# 1. Installation des dépendances système
-# On ajoute 'gcc', 'pkg-config', 'python3-dev', 'libc6-dev' pour pouvoir compiler pyvips
+# 1. Installation des dépendances système 
 RUN apt-get update && apt-get install -y \
     libvips-dev \
     gcc \
