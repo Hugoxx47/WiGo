@@ -79,7 +79,7 @@ export default function Viewer() {
   const viewerRef = useRef<OpenSeadragon.Viewer | null>(null);
   const containerRef = useRef<HTMLDivElement>(null); 
 
-  // --- 1. INITIALISATION OSD (AVEC LOCK INTELLIGENT) ---
+  // --- 1. INITIALISATION OSD (AVEC LOCK FLUIDE) ---
   useEffect(() => {
     if (!rawUrl) return;
     const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -99,10 +99,12 @@ export default function Viewer() {
             gestureSettingsMouse: { clickToZoom: false },
             crossOriginPolicy: "Anonymous",
             useCanvas: false, 
-            // On désactive les contraintes natives trop strictes
+            
+            // --- CONFIGURATION CLÉ ---
             showHomeControl: false, 
-            visibilityRatio: 0.1, 
-            constrainDuringPan: false, // On va gérer ça manuellement
+            visibilityRatio: 0, // IMPORTANT : On désactive les murs natifs pour mettre les nôtres
+            constrainDuringPan: false,
+            minZoomImageRatio: 0,
         });
 
         viewerRef.current = viewer;
@@ -116,76 +118,57 @@ export default function Viewer() {
 
         if (initialROI && initialROI.w > 0) {
             viewer.addHandler('open', function() {
+                // Conversion des pixels en coordonnées OSD
                 const roiRect = viewer.viewport.imageToViewportRectangle(
                     initialROI.x, initialROI.y, initialROI.w, initialROI.h
                 );
                 
-                // 1. On cadre la vue sur la zone sauvegardée immédiatement
+                // 1. Zoom initial sur la zone
                 viewer.viewport.fitBounds(roiRect, true);
 
                 if (isAnnotationMode) {
-                    // Petit délai pour laisser le fitBounds se terminer avant de verrouiller
                     setTimeout(() => {
-                        // 2. On définit le niveau de zoom actuel comme le MINIMUM autorisé
-                        // (Tu ne pourras pas dézoomer plus loin que la vue d'ensemble de ta zone)
+                        // 2. Définir le zoom min pour ne pas reculer plus loin que la zone
                         const homeZoom = viewer.viewport.getZoom();
                         viewer.viewport.minZoomLevel = homeZoom;
 
-                        // 3. LOGIQUE DE CONTRAINTE INTELLIGENTE
-                        // Cela remplace constrainDuringPan: true par une logique qui autorise
-                        // à bouger dans la zone si on est zoomé
+                        // 3. LOGIQUE DE CLAMPING (Murs Glissants)
+                        // Cette logique permet d'aller PARTOUT dans le carré, y compris les coins
                         viewer.addHandler('animation', () => {
-                            const bounds = roiRect; // La zone autorisée (ROI)
-                            const viewport = viewer.viewport.getBounds(); // Ce que voit l'utilisateur
-                            let adjusted = false;
-
-                            // --- Gestion Axe Horizontal (X) ---
-                            if (viewport.width >= bounds.width) {
-                                // Si l'écran est plus large que la zone, on CENTRE la zone
-                                const targetX = bounds.x - (viewport.width - bounds.width) / 2;
-                                if (Math.abs(viewport.x - targetX) > 0.0001) {
-                                    viewport.x = targetX;
-                                    adjusted = true;
-                                }
+                            const bounds = roiRect; // La boîte (Extraction)
+                            const current = viewer.viewport.getBounds(); // La vue caméra
+                            
+                            let newX = current.x;
+                            let newY = current.y;
+                            
+                            // --- AXE X ---
+                            if (current.width >= bounds.width) {
+                                // Si on voit tout en largeur -> On Centre
+                                newX = bounds.x + (bounds.width - current.width) / 2;
                             } else {
-                                // Si l'écran est zoomé (plus petit que la zone), on BLOQUE aux bords gauche/droite
-                                // mais on autorise le mouvement ENTRE les bords
-                                if (viewport.x < bounds.x) { 
-                                    viewport.x = bounds.x; 
-                                    adjusted = true; 
-                                }
-                                if (viewport.x + viewport.width > bounds.x + bounds.width) {
-                                    viewport.x = bounds.x + bounds.width - viewport.width;
-                                    adjusted = true;
-                                }
+                                // Si on est zoomé -> On borné (Clamp)
+                                // newX ne doit pas être < bounds.x (mur gauche)
+                                // newX ne doit pas être > bounds.x + bounds.width - current.width (mur droit)
+                                newX = Math.max(bounds.x, Math.min(newX, bounds.x + bounds.width - current.width));
                             }
 
-                            // --- Gestion Axe Vertical (Y) ---
-                            if (viewport.height >= bounds.height) {
-                                // Si l'écran est plus haut que la zone, on CENTRE la zone
-                                const targetY = bounds.y - (viewport.height - bounds.height) / 2;
-                                if (Math.abs(viewport.y - targetY) > 0.0001) {
-                                    viewport.y = targetY;
-                                    adjusted = true;
-                                }
+                            // --- AXE Y ---
+                            if (current.height >= bounds.height) {
+                                // Si on voit tout en hauteur -> On Centre
+                                newY = bounds.y + (bounds.height - current.height) / 2;
                             } else {
-                                // Si l'écran est zoomé, on BLOQUE aux bords haut/bas
-                                if (viewport.y < bounds.y) { 
-                                    viewport.y = bounds.y; 
-                                    adjusted = true; 
-                                }
-                                if (viewport.y + viewport.height > bounds.y + bounds.height) {
-                                    viewport.y = bounds.y + bounds.height - viewport.height;
-                                    adjusted = true;
-                                }
+                                // Si on est zoomé -> On borné (Clamp)
+                                // newY ne doit pas être < bounds.y (mur haut)
+                                // newY ne doit pas être > bounds.y + bounds.height - current.height (mur bas)
+                                newY = Math.max(bounds.y, Math.min(newY, bounds.y + bounds.height - current.height));
                             }
 
-                            // Si une correction a été faite, on applique
-                            if (adjusted) {
-                                viewer.viewport.fitBounds(viewport, true);
+                            // On applique la correction si nécessaire
+                            if (newX !== current.x || newY !== current.y) {
+                                viewer.viewport.fitBounds(new OpenSeadragon.Rect(newX, newY, current.width, current.height), true);
                             }
                         });
-                    }, 50);
+                    }, 100);
                 }
             });
         }
@@ -195,7 +178,6 @@ export default function Viewer() {
 
   useEffect(() => {
       if (viewerRef.current) {
-          // On autorise le 'move' OSD seulement si on ne déplace pas un objet
           const canPan = currentTool === 'move' && movingShapeIndex === null;
           viewerRef.current.setMouseNavEnabled(canPan);
       }
