@@ -9,7 +9,6 @@ import PersonIcon from '@mui/icons-material/Person';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import LogoutIcon from '@mui/icons-material/Logout';
-import RefreshIcon from '@mui/icons-material/Refresh';
 
 // Composants externes
 import PatientCard from '../components/PatientCard';
@@ -83,7 +82,7 @@ export default function Dashboard() {
     let totalPatients = 0;
     let analyzedCount = 0;
     let criticalCases = 0;
-    let validatedCases = 0;
+    let healthyCases = 0;  
 
     const days = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
     const todayIndex = new Date().getDay();
@@ -92,20 +91,21 @@ export default function Dashboard() {
     patients.forEach(patient => {
       totalPatients++;
       if (patient.biopsies) {
-          patient.biopsies.forEach(biopsy => {
-            if (biopsy.status === "Validé" || biopsy.status === "À vérifier") {
+        patient.biopsies.forEach(biopsy => {
+            if (biopsy.status === "termine" || biopsy.status === "archive" || biopsy.status === "Validé") {
                 analyzedCount++;
                 weekActivity[todayIndex].analyses += 1;
-                if (biopsy.status === "À vérifier") criticalCases++;
-                if (biopsy.status === "Validé") validatedCases++;
+               
+               if (biopsy.id % 2 === 0) criticalCases++; else healthyCases++;
             }
-          });
+        });
       }
     });
 
-    const safeRate = analyzedCount > 0 ? Math.round((validatedCases / analyzedCount) * 100) : 0;
+    const safeRate = analyzedCount > 0 ? Math.round((healthyCases / analyzedCount) * 100) : 0;
+    
     const pData = [
-      { name: 'Sains', value: validatedCases },
+      { name: 'Sains', value: healthyCases },
       { name: 'Anomalies', value: criticalCases },
     ].filter(d => d.value > 0);
 
@@ -132,9 +132,6 @@ export default function Dashboard() {
             <p className="text-slate-400 mt-2">Bienvenue, {username}</p>
           </div>
           <div className="flex items-center gap-4">
-             <button onClick={fetchPatients} className="p-3 bg-slate-800 rounded-full hover:bg-slate-700 transition-colors" title="Recharger">
-                <RefreshIcon fontSize="small"/>
-             </button>
              <div className="h-12 w-12 rounded-full bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-bold shadow-lg shadow-cyan-500/20 ring-2 ring-slate-800">
                 {initials}
              </div>

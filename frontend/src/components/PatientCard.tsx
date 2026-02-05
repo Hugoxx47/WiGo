@@ -6,6 +6,7 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import PersonIcon from '@mui/icons-material/Person';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 import MedicalServicesIcon from '@mui/icons-material/MedicalServices';
+import AssignmentIcon from '@mui/icons-material/Assignment'; // Nouvel icône pour le Motif
 
 interface Biopsy {
   id: number;
@@ -21,6 +22,7 @@ interface Patient {
   folder_id: string;
   birth_date?: string;
   biopsies: Biopsy[];
+  motif?: string; // On ajoute le champ motif optionnel
 }
 
 interface Extraction {
@@ -49,6 +51,19 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
 
   // 2. Médecin
   const doctorName = localStorage.getItem("biopsie_user") || "Dr. Non assigné";
+
+  // 3. MOTIF DE LA MALADIE (3 Motifs différents en rapport avec le projet)
+  // On simule un motif basé sur l'ID du patient pour qu'il soit constant mais varié
+  const getMotif = () => {
+      const motifs = [
+          "Masse palpable (QSE)",       // Motif 1 : Clinique
+          "Microcalcifications ACR4",   // Motif 2 : Radiologique
+          "Suivi Oncologique"           // Motif 3 : Historique
+      ];
+      // Si le patient a déjà un motif en base on le prend, sinon on en attribue un
+      return patient.motif || motifs[patient.id % motifs.length];
+  };
+  const motifConsultation = getMotif();
 
   // --- NAVIGATION ---
   const handleAnnotateClick = async () => {
@@ -99,6 +114,8 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
       
       {/* INFO MÉDICALES */}
       <div className="bg-slate-950/50 rounded-xl p-4 border border-slate-800 space-y-3">
+          
+          {/* Ligne Médecin */}
           <div className="flex justify-between items-center text-sm">
              <div className="flex items-center gap-2 text-slate-400">
                 <MedicalServicesIcon fontSize="small" />
@@ -107,6 +124,18 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
              <span className="font-semibold text-slate-200">{doctorName}</span>
           </div>
 
+          {/* Ligne Motif (NOUVEAU) */}
+          <div className="flex justify-between items-center text-sm border-t border-slate-800 pt-3">
+             <div className="flex items-center gap-2 text-slate-400">
+                <AssignmentIcon fontSize="small" />
+                <span>Motif</span>
+             </div>
+             <span className="font-semibold text-cyan-400 text-right text-xs truncate max-w-[150px]" title={motifConsultation}>
+                {motifConsultation}
+             </span>
+          </div>
+
+          {/* Ligne Suivi */}
           <div className="flex justify-between items-center text-sm border-t border-slate-800 pt-3">
              <div className="flex items-center gap-2 text-slate-400">
                 <CalendarTodayIcon fontSize="small" />

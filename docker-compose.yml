@@ -16,19 +16,24 @@ services:
     networks:
       - app_network
 
-  # --- PACS Server (Orthanc) ---
-  orthanc:
-    image: jodogne/orthanc-plugins
-    container_name: p6_orthanc
-    ports: ["4242:4242", "8042:8042"]
-    environment:
-      ORTHANC_NAME: "MY_PACS"
-      ORTHANC_JSON: |
-        { "Name" : "Orthanc", "HttpPort" : 8042, "DicomPort" : 4242, "RemoteAccessAllowed" : true, "AuthenticationEnabled" : false, "HttpServerEnabled" : true, "DicomServerEnabled" : true, "CorsEnabled": true, "CorsAllowCredentials": true, "CorsAllowedOrigins": ["*"] }
-    volumes:
-      - orthanc-storage:/var/lib/orthanc/db
-    networks:
-      - app_network
+  # --- Object Storage (MinIO) ---
+  minio:
+      image: minio/minio
+      container_name: p6_minio
+      hostname: minio
+      ports:
+        - "9000:9000"
+        - "9001:9001"
+      environment:
+        MINIO_ROOT_USER: minioadmin
+        MINIO_ROOT_PASSWORD: minioadmin
+      volumes:
+        - minio_data:/data
+      command: server /data --console-address ":9001"
+      networks:
+        app_network:
+          aliases:
+            - minio
 
   # --- Backend (Python/FastAPI) ---
   backend:
@@ -37,12 +42,18 @@ services:
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./backend:/app
-      - ./backend/dzi_data:/app/dzi_data
+      - ./backend/dzi_data:/app/dzi_data 
     ports:
       - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://user:password@p6_postgres:5432/p6_db
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET_NAME=biopsies
     depends_on:
       - postgres
-      - orthanc
+      - minio
     networks:
       - app_network
 
@@ -62,7 +73,7 @@ services:
 
 volumes:
   postgres_data:
-  orthanc-storage:
+  minio_data:
 
 networks:
   app_network:
