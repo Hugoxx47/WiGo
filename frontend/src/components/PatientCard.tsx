@@ -6,7 +6,7 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import PersonIcon from '@mui/icons-material/Person';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 import MedicalServicesIcon from '@mui/icons-material/MedicalServices';
-import AssignmentIcon from '@mui/icons-material/Assignment'; // Nouvel icône pour le Motif
+import AssignmentIcon from '@mui/icons-material/Assignment';
 
 interface Biopsy {
   id: number;
@@ -22,7 +22,7 @@ interface Patient {
   folder_id: string;
   birth_date?: string;
   biopsies: Biopsy[];
-  motif?: string; // On ajoute le champ motif optionnel
+  motif?: string;
 }
 
 interface Extraction {
@@ -36,13 +36,12 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
   const [extractions, setExtractions] = useState<Extraction[]>([]);
   const [showModal, setShowModal] = useState(false);
 
-  // --- LOGIQUE MÉTIER ---
-
   // 1. Dates (Simulées)
   const getDates = () => {
     const today = new Date();
     const dateMax = today.toLocaleDateString('fr-FR');
     const past = new Date();
+    // eslint-disable-next-line react-hooks/purity
     past.setDate(today.getDate() - (Math.floor(Math.random() * 10) + 2)); 
     const dateMin = past.toLocaleDateString('fr-FR');
     return { min: dateMin, max: dateMax };
@@ -53,14 +52,12 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
   const doctorName = localStorage.getItem("biopsie_user") || "Dr. Non assigné";
 
   // 3. MOTIF DE LA MALADIE (3 Motifs différents en rapport avec le projet)
-  // On simule un motif basé sur l'ID du patient pour qu'il soit constant mais varié
   const getMotif = () => {
       const motifs = [
-          "Masse palpable (QSE)",       // Motif 1 : Clinique
-          "Microcalcifications ACR4",   // Motif 2 : Radiologique
-          "Suivi Oncologique"           // Motif 3 : Historique
+          "Masse palpable (QSE)",     
+          "Microcalcifications ACR4", 
+          "Suivi Oncologique" 
       ];
-      // Si le patient a déjà un motif en base on le prend, sinon on en attribue un
       return patient.motif || motifs[patient.id % motifs.length];
   };
   const motifConsultation = getMotif();
@@ -76,6 +73,7 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
         setExtractions(data);
         setShowModal(true);
       }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     } catch (error) { alert("Erreur de connexion"); }
   };
 

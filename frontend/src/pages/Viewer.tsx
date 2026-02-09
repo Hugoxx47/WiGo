@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import OpenSeadragon from 'openseadragon'; 
-// @ts-ignore
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-expect-error
 import domtoimage from 'dom-to-image'; 
 
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -17,7 +18,6 @@ import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import DescriptionIcon from '@mui/icons-material/Description';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import VisibilityIcon from '@mui/icons-material/Visibility'; 
-import ImageSearchIcon from '@mui/icons-material/ImageSearch';
 
 type ToolType = 'move' | 'rect' | 'circle' | 'polygon' | 'text';
 
@@ -51,7 +51,7 @@ export default function Viewer() {
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [newExtractionId, setNewExtractionId] = useState<number | null>(null);
 
-  const [redrawToken, setRedrawToken] = useState(0);
+  const [, setRedrawToken] = useState(0);
 
   // Formulaire
   const [prelevementType, setPrelevementType] = useState("fine");
@@ -94,7 +94,7 @@ export default function Viewer() {
   useEffect(() => {
     if (!rawUrl) return;
     const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-    let finalTileSource = rawUrl.startsWith('http') ? rawUrl : `${baseUrl}/dzi_data/${rawUrl}`;
+    const finalTileSource = rawUrl.startsWith('http') ? rawUrl : `${baseUrl}/dzi_data/${rawUrl}`;
 
     if (viewerRef.current) viewerRef.current.destroy();
 
@@ -161,7 +161,7 @@ export default function Viewer() {
         }
     } catch (e) { console.error("Erreur OSD:", e); }
     return () => { if (viewerRef.current) viewerRef.current.destroy(); };
-  }, [rawUrl, isAnnotationMode]);
+  }, [rawUrl, isAnnotationMode, initialROI]);
 
   useEffect(() => {
       if (viewerRef.current) {
@@ -181,16 +181,24 @@ export default function Viewer() {
       }, 1500);
   };
 
-  const handleDownloadSnapshot = () => {
-      const node = containerRef.current;
-      if (!node) return;
-      domtoimage.toJpeg(node, { quality: 0.95 }).then((dataUrl: string) => {
-          const link = document.createElement('a');
-          link.download = `annotation_${patientName}.jpg`;
-          link.href = dataUrl;
-          link.click();
-      });
-  };
+    const handleDownloadSnapshot = () => {
+        const node = containerRef.current;
+        if (!node) return;
+        domtoimage.toJpeg(node, { 
+            quality: 0.95,
+            filter: (node: Node) => {
+                if (node instanceof HTMLElement && node.classList.contains('ui-layer')) {
+                    return false;
+                }
+                return true;
+            }
+        }).then((dataUrl: string) => {
+            const link = document.createElement('a');
+            link.download = `annotation_${patientName}.jpg`;
+            link.href = dataUrl;
+            link.click();
+        });
+    };
 
   const handleUndo = () => {
       setShapes(prev => prev.slice(0, -1));
@@ -340,7 +348,7 @@ export default function Viewer() {
                       fontWeight="bold" 
                       onMouseDown={(e) => handleShapeMouseDown(e, idx)} 
                       onDoubleClick={(e) => {
-                          e.stopPropagation(); // Empêche le double clic carte
+                          e.stopPropagation();
                           startEditingText(idx);
                       }}
                       style={{
@@ -473,6 +481,7 @@ export default function Viewer() {
           } else {
               alert("Erreur serveur lors de la sauvegarde.");
           }
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       } catch (err) { alert("Erreur réseau"); } 
       finally { setLoading(false); }
   };
@@ -516,7 +525,7 @@ export default function Viewer() {
           </div>
 
           {/* BARRE D'OUTILS FLOTTANTE */}
-          <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-20 pointer-events-none flex gap-4">
+          <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-20 pointer-events-none flex gap-4 ui-layer">
              {/* ... Bouton retour ... */}
              <div className="pointer-events-auto bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-2xl p-2 flex items-center gap-4 shadow-2xl">
                 <button onClick={() => navigate('/dashboard')} className="p-2 hover:bg-white/10 rounded-xl transition-colors"><ArrowBackIcon /></button>
@@ -611,7 +620,6 @@ export default function Viewer() {
                   )}
 
                   <section className="space-y-4">
-                      {/* ... reste du formulaire (Prélèvement, Analyse, etc.) ... */}
                       <h3 className="text-sm font-bold text-emerald-400 uppercase tracking-widest border-b border-emerald-900/30 pb-2">1. Prélèvement</h3>
                       <div className="space-y-4">
                           <div><label className="block text-xs text-slate-400 mb-1 ml-1">Nom de l'extraction</label><input type="text" value={labelInput} onChange={(e) => setLabelInput(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white font-bold text-emerald-300 focus:outline-none focus:border-emerald-500 transition-colors" /></div>

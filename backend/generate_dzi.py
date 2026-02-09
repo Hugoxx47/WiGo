@@ -43,13 +43,20 @@ def download_from_minio():
         return False
 
 def clean_directory(directory):
-    """Vide le contenu d'un dossier sans supprimer le dossier lui-même (compatible Volume Docker)"""
+    """
+    Vide le contenu du dossier MAIS protège le dossier 'CMU-1' qui contient les extractions.
+    """
     if not os.path.exists(directory):
         os.makedirs(directory, exist_ok=True)
         return
 
-    print(f"🧹 Nettoyage du contenu de {directory}...")
+    print(f"🧹 Nettoyage intelligent de {directory}...")
     for filename in os.listdir(directory):
+        # --- PROTECTION ---
+        if filename == "CMU-1":
+            print(f"🛡️  Dossier protégé conservé : {filename}")
+            continue
+
         file_path = os.path.join(directory, filename)
         try:
             if os.path.isfile(file_path) or os.path.islink(file_path):
@@ -62,10 +69,10 @@ def clean_directory(directory):
 def generate_dzi():
     print("--- DÉBUT DU TRAITEMENT ---")
     
-    # 1. Nettoyage du contenu (CORRIGÉ)
+    # 1. Nettoyage sécurisé
     clean_directory(OUTPUT_DIR)
 
-    # 2. Téléchargement (Si pas déjà présent)
+    # 2. Téléchargement
     if not os.path.exists(LOCAL_INPUT_FILE):
         if not download_from_minio():
             return

@@ -96,7 +96,6 @@ class AnalysisPayload(BaseModel):
     drawings: List[DrawingSchema] = []
 
 # --- ROUTES ---
-
 @app.post("/seed")
 def seed_database(db: Session = Depends(database.get_db)):
     try:
@@ -227,7 +226,6 @@ def update_analysis(data: AnalysisPayload, db: Session = Depends(database.get_db
     ext.pathologist = data.pathologist
     ext.validation_date = data.validation_date
     
-    # GESTION DES DESSINS : Suppression anciens -> Ajout nouveaux
     db.query(models.Drawing).filter(models.Drawing.extraction_id == ext.id).delete()
     
     for d in data.drawings:
@@ -285,7 +283,6 @@ def get_details(extraction_id: int, db: Session = Depends(database.get_db)):
         "status": ext.status,
         "pathologist": ext.pathologist,
         "validation_date": ext.validation_date,
-        # ON RENVOIE LES DESSINS
         "drawings": [
             {
                 "type": d.type, "x": d.x, "y": d.y, 

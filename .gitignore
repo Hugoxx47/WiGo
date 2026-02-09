@@ -30,6 +30,4 @@ __pycache__/
 *.tiff
 backend/vips/
 backend/openslide_bin/
-*_files/
-*.dzi
 node_modules/
