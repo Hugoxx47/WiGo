@@ -137,6 +137,7 @@ def get_patients(db: Session = Depends(database.get_db)):
 
 @app.post("/extract-roi")
 def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
+    # 1. Gestion du Patient
     patient = db.query(models.Patient).filter(models.Patient.folder_id == data.patient_folder).first()
     if not patient:
         patient = models.Patient(name=data.patient_name, age=0, folder_id=data.patient_folder)
@@ -149,6 +150,7 @@ def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
     if data.medical_history: patient.medical_history = data.medical_history
     db.commit()
 
+    # 2. Extraction de l'image 
     safe_folder = "".join(c for c in data.patient_folder if c.isalnum() or c in (' ', '-', '_')).strip()
     patient_dir = os.path.join(DZI_FOLDER, safe_folder, "extractions")
     os.makedirs(patient_dir, exist_ok=True)
@@ -168,6 +170,7 @@ def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
 
     sc = data.slide_count if isinstance(data.slide_count, int) else None
 
+    # 3. Création de l'objet Extraction (inchangé)
     new_ext = models.Extraction(
         patient_id=patient.id,
         label=data.annotation_label,
@@ -193,6 +196,21 @@ def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
     )
     db.add(new_ext)
     db.commit()
+    db.refresh(new_ext)
+
+    if data.drawings:
+        print(f"💾 Sauvegarde de {len(data.drawings)} annotations pour l'extraction {new_ext.id}")
+        for d in data.drawings:
+            new_draw = models.Drawing(
+                extraction_id=new_ext.id,
+                type=d.type,
+                x=d.x, y=d.y, w=d.w, h=d.h,
+                radius=d.radius,
+                text=d.text,
+                points=d.points
+            )
+            db.add(new_draw)
+        db.commit()
     
     return {"message": "Dossier créé avec succès", "id": new_ext.id}
 
