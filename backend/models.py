@@ -76,5 +76,7 @@ class Drawing(Base):
     radius = Column(Float, nullable=True)
     text = Column(String, nullable=True)
     points = Column(JSON, nullable=True) 
+
+    author = Column(String, nullable=True)
     
     extraction = relationship("Extraction", back_populates="drawings")

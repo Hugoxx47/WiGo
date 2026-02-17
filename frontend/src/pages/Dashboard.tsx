@@ -59,22 +59,9 @@ export default function Dashboard() {
       }
   };
 
-  useEffect(() => {
-    const initDashboard = async () => {
-        const lastUser = localStorage.getItem("last_active_user");
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
-        if (lastUser !== username) {
-            try {
-                await fetch(`${apiUrl}/seed`, { method: 'POST' });
-                localStorage.setItem("last_active_user", username);
-            } catch (e) {
-                console.warn("Seed auto échoué", e);
-            }
-        }
-        fetchPatients();
-    };
-    initDashboard();
+  useEffect(() => {    
+    // --- CORRECTION : ON A RETIRÉ LE /seed AUTOMATIQUE ICI ---
+    fetchPatients();
   }, [username]);
 
   // --- STATS ---
@@ -95,7 +82,7 @@ export default function Dashboard() {
             if (biopsy.status === "termine" || biopsy.status === "archive" || biopsy.status === "Validé") {
                 analyzedCount++;
                 weekActivity[todayIndex].analyses += 1;
-               
+                
                if (biopsy.id % 2 === 0) criticalCases++; else healthyCases++;
             }
         });

@@ -58,6 +58,7 @@ class DrawingSchema(BaseModel):
     radius: Optional[float] = 0
     text: Optional[str] = ""
     points: Optional[List[Dict[str, float]]] = []
+    author: Optional[str] = "Inconnu"
 
 class AnalysisPayload(BaseModel):
     filename: str
@@ -99,7 +100,6 @@ class AnalysisPayload(BaseModel):
 @app.post("/seed")
 def seed_database(db: Session = Depends(database.get_db)):
     try:
-        # On drop tout pour être sûr que la table drawings est créée avec la bonne structure
         models.Base.metadata.drop_all(bind=database.engine)
         models.Base.metadata.create_all(bind=database.engine)
         
@@ -150,7 +150,7 @@ def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
     if data.medical_history: patient.medical_history = data.medical_history
     db.commit()
 
-    # 2. Extraction de l'image 
+    # 2. Sauvegarde de l'image (Fichier Physique)
     safe_folder = "".join(c for c in data.patient_folder if c.isalnum() or c in (' ', '-', '_')).strip()
     patient_dir = os.path.join(DZI_FOLDER, safe_folder, "extractions")
     os.makedirs(patient_dir, exist_ok=True)
@@ -168,9 +168,9 @@ def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
         except Exception as e:
             print(f"⚠️ Erreur extraction: {e}")
 
+    # 3. Sauvegarde de l'Extraction en BDD
     sc = data.slide_count if isinstance(data.slide_count, int) else None
 
-    # 3. Création de l'objet Extraction (inchangé)
     new_ext = models.Extraction(
         patient_id=patient.id,
         label=data.annotation_label,
@@ -196,23 +196,14 @@ def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
     )
     db.add(new_ext)
     db.commit()
-    db.refresh(new_ext)
+    db.refresh(new_ext) 
 
-    if data.drawings:
-        print(f"💾 Sauvegarde de {len(data.drawings)} annotations pour l'extraction {new_ext.id}")
-        for d in data.drawings:
-            new_draw = models.Drawing(
-                extraction_id=new_ext.id,
-                type=d.type,
-                x=d.x, y=d.y, w=d.w, h=d.h,
-                radius=d.radius,
-                text=d.text,
-                points=d.points
-            )
-            db.add(new_draw)
-        db.commit()
+    # --- MODIFICATION ICI ---
+    # J'ai supprimé le bloc "if data.drawings:" qui était ici.
+    # On ne sauvegarde PAS les dessins lors de la création initiale.
+    # Cela permet à l'extraction d'être vierge (sans le rectangle vert).
     
-    return {"message": "Dossier créé avec succès", "id": new_ext.id}
+    return {"message": "Dossier créé avec succès", "id": new_ext.id, "extraction_id": new_ext.id}
 
 @app.post("/annotations/save")
 def update_analysis(data: AnalysisPayload, db: Session = Depends(database.get_db)):
@@ -244,6 +235,7 @@ def update_analysis(data: AnalysisPayload, db: Session = Depends(database.get_db
     ext.pathologist = data.pathologist
     ext.validation_date = data.validation_date
     
+    # ICI ON GARDE LA SAUVEGARDE (car c'est une mise à jour volontaire)
     db.query(models.Drawing).filter(models.Drawing.extraction_id == ext.id).delete()
     
     for d in data.drawings:
@@ -253,7 +245,8 @@ def update_analysis(data: AnalysisPayload, db: Session = Depends(database.get_db
             x=d.x, y=d.y, w=d.w, h=d.h,
             radius=d.radius,
             text=d.text,
-            points=d.points
+            points=d.points,
+            author=d.author
         )
         db.add(new_draw)
 
@@ -305,7 +298,8 @@ def get_details(extraction_id: int, db: Session = Depends(database.get_db)):
             {
                 "type": d.type, "x": d.x, "y": d.y, 
                 "w": d.w, "h": d.h, "radius": d.radius, 
-                "text": d.text, "points": d.points
+                "text": d.text, "points": d.points,
+                "author": d.author
             } for d in ext.drawings
         ]
     }

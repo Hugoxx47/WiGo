@@ -29,6 +29,7 @@ interface Extraction {
   id: number;
   filename: string;
   roi: { x: number; y: number; w: number; h: number }; 
+  status?: string; 
 }
 
 const PatientCard = ({ patient }: { patient: Patient }) => {
@@ -36,22 +37,20 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
   const [extractions, setExtractions] = useState<Extraction[]>([]);
   const [showModal, setShowModal] = useState(false);
 
+  const doctorName = localStorage.getItem("biopsie_user") || "Dr. Non assigné";
+
   // 1. Dates (Simulées)
   const getDates = () => {
     const today = new Date();
     const dateMax = today.toLocaleDateString('fr-FR');
     const past = new Date();
-    // eslint-disable-next-line react-hooks/purity
     past.setDate(today.getDate() - (Math.floor(Math.random() * 10) + 2)); 
     const dateMin = past.toLocaleDateString('fr-FR');
     return { min: dateMin, max: dateMax };
   };
   const { min, max } = getDates();
 
-  // 2. Médecin
-  const doctorName = localStorage.getItem("biopsie_user") || "Dr. Non assigné";
-
-  // 3. MOTIF DE LA MALADIE (3 Motifs différents en rapport avec le projet)
+  // 3. MOTIF DE LA MALADIE 
   const getMotif = () => {
       const motifs = [
           "Masse palpable (QSE)",     
@@ -65,16 +64,28 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
   // --- NAVIGATION ---
   const handleAnnotateClick = async () => {
     try {
-      const response = await fetch(`http://localhost:8000/patients/${patient.folder_id}/extractions`);
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const url = `${apiUrl}/patients/${patient.folder_id}/extractions`;
+      
+      console.log(`🔍 Recherche extractions pour ${patient.folder_id} vers ${url}`);
+      
+      const response = await fetch(url);
       const data = await response.json();
+      
+      console.log("📦 Extractions trouvées :", data);
+
       if (data.length === 0) {
-        alert("Aucune zone extraite. Veuillez d'abord cliquer sur 'Voir tout' pour créer une extraction.");
+        // Pas d'extraction existante => On en crée une
+        openViewer(); 
       } else {
+        // Il y a des dossiers => On montre la liste pour choisir
         setExtractions(data);
         setShowModal(true);
       }
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    } catch (error) { alert("Erreur de connexion"); }
+    } catch (error) { 
+        console.error("Erreur Fetch Extractions:", error);
+        alert("Erreur de connexion au serveur."); 
+    }
   };
 
   const openViewer = (extractionData?: Extraction) => {
@@ -122,7 +133,7 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
              <span className="font-semibold text-slate-200">{doctorName}</span>
           </div>
 
-          {/* Ligne Motif (NOUVEAU) */}
+          {/* Ligne Motif */}
           <div className="flex justify-between items-center text-sm border-t border-slate-800 pt-3">
              <div className="flex items-center gap-2 text-slate-400">
                 <AssignmentIcon fontSize="small" />
@@ -150,19 +161,19 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
       {/* ACTIONS */}
       <div className="flex gap-3 mt-auto">
         <button onClick={() => mainBiopsyUrl && openViewer()} className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors">
-            <VisibilityIcon fontSize="small"/> Voir tout
+            <VisibilityIcon fontSize="small"/> Nouvelle
         </button>
         <button onClick={handleAnnotateClick} className="flex-1 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-cyan-900/20">
-            <EditIcon fontSize="small"/> Annoter
+            <EditIcon fontSize="small"/> Ouvrir
         </button>
       </div>
 
-      {/* MODAL */}
+      {/* MODAL LISTE DES DOSSIERS */}
       {showModal && (
         <div className="fixed inset-0 bg-black/80 flex justify-center items-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
             <div className="bg-slate-800 p-4 border-b border-slate-700">
-                <h4 className="font-bold text-white">Sélectionner une zone</h4>
+                <h4 className="font-bold text-white">Choisir le dossier</h4>
                 <p className="text-xs text-slate-400">Patient: {patient.name}</p>
             </div>
             
@@ -173,14 +184,19 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
                     <div className="p-2 bg-slate-800 rounded-lg text-cyan-400 group-hover:text-white transition-colors">
                         <DescriptionIcon fontSize="small" />
                     </div>
-                    <span className="text-sm text-slate-300 group-hover:text-white font-medium">{file.filename}</span>
+                    <div className="flex flex-col">
+                        {/* Affiche le nom ET l'ID pour être sûr */}
+                        <span className="text-sm text-slate-300 group-hover:text-white font-bold">{file.filename}</span>
+                        <span className="text-[10px] text-slate-500">ID Analyse: #{file.id} • {file.status || "En cours"}</span>
+                    </div>
                   </button>
                 </li>
               ))}
             </ul>
             
-            <div className="p-4 bg-slate-800 border-t border-slate-700">
-                <button onClick={() => setShowModal(false)} className="w-full py-2 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-lg transition-colors font-medium text-sm">Fermer</button>
+            <div className="p-4 bg-slate-800 border-t border-slate-700 flex gap-2">
+                <button onClick={() => openViewer()} className="flex-1 py-2 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white rounded-lg transition-colors font-medium text-sm">+ Nouveau</button>
+                <button onClick={() => setShowModal(false)} className="flex-1 py-2 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-lg transition-colors font-medium text-sm">Fermer</button>
             </div>
           </div>
         </div>

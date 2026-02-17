@@ -18,6 +18,7 @@ import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import DescriptionIcon from '@mui/icons-material/Description';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import VisibilityIcon from '@mui/icons-material/Visibility'; 
+import PersonIcon from '@mui/icons-material/Person';
 
 type ToolType = 'move' | 'rect' | 'circle' | 'polygon' | 'text';
 
@@ -29,13 +30,16 @@ interface Shape {
   points?: {x: number, y: number}[]; 
   text?: string;
   id?: number; 
+  author?: string;
 }
 
 export default function Viewer() {
   const navigate = useNavigate();
   const location = useLocation();
-  const searchParams = new URLSearchParams(location.search);
   
+  const currentUser = localStorage.getItem("biopsie_user") || "Inconnu";
+
+  const searchParams = new URLSearchParams(location.search);
   const rawUrl = searchParams.get('url'); 
   const patientName = location.state?.patientName || "Patient";
   const folderId = location.state?.folderId || "X-00";
@@ -47,10 +51,8 @@ export default function Viewer() {
   const [loading, setLoading] = useState(false);
   const [showSidebar, setShowSidebar] = useState(isAnnotationMode); 
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
-  
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [newExtractionId, setNewExtractionId] = useState<number | null>(null);
-
   const [, setRedrawToken] = useState(0);
 
   // Formulaire
@@ -81,16 +83,13 @@ export default function Viewer() {
   const [movingShapeIndex, setMovingShapeIndex] = useState<number | null>(null);
   
   const [polyPoints, setPolyPoints] = useState<{x: number, y: number}[]>([]);
-  
-  // --- MODIFICATION : GESTION TEXTE ---
-  const [pendingTextPos, setPendingTextPos] = useState<{x: number, y: number} | null>(null); // Pour création
-  const [editingShapeIndex, setEditingShapeIndex] = useState<number | null>(null); // Pour modification
+  const [pendingTextPos, setPendingTextPos] = useState<{x: number, y: number} | null>(null); 
+  const [editingShapeIndex, setEditingShapeIndex] = useState<number | null>(null); 
   const [textValue, setTextValue] = useState("");
 
   const viewerRef = useRef<OpenSeadragon.Viewer | null>(null);
   const containerRef = useRef<HTMLDivElement>(null); 
 
-  // --- INITIALISATION OSD ---
   useEffect(() => {
     if (!rawUrl) return;
     const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -122,7 +121,6 @@ export default function Viewer() {
         viewer.addHandler('animation', updateOverlay);
         viewer.addHandler('update-viewport', updateOverlay);
         viewer.addHandler('resize', updateOverlay);
-
         viewer.setMouseNavEnabled(true);
 
         if (initialROI && initialROI.w > 0) {
@@ -141,16 +139,12 @@ export default function Viewer() {
                             const current = viewer.viewport.getBounds();
                             let newX = current.x;
                             let newY = current.y;
-                            if (current.width >= bounds.width) {
-                                newX = bounds.x + (bounds.width - current.width) / 2;
-                            } else {
-                                newX = Math.max(bounds.x, Math.min(newX, bounds.x + bounds.width - current.width));
-                            }
-                            if (current.height >= bounds.height) {
-                                newY = bounds.y + (bounds.height - current.height) / 2;
-                            } else {
-                                newY = Math.max(bounds.y, Math.min(newY, bounds.y + bounds.height - current.height));
-                            }
+                            if (current.width >= bounds.width) newX = bounds.x + (bounds.width - current.width) / 2;
+                            else newX = Math.max(bounds.x, Math.min(newX, bounds.x + bounds.width - current.width));
+                            
+                            if (current.height >= bounds.height) newY = bounds.y + (bounds.height - current.height) / 2;
+                            else newY = Math.max(bounds.y, Math.min(newY, bounds.y + bounds.height - current.height));
+                            
                             if (newX !== current.x || newY !== current.y) {
                                 viewer.viewport.fitBounds(new OpenSeadragon.Rect(newX, newY, current.width, current.height), true);
                             }
@@ -170,7 +164,6 @@ export default function Viewer() {
       }
   }, [currentTool, movingShapeIndex]);
 
-  // --- FONCTION IA ---
   const handleAiAnalysis = () => {
       setLoading(true);
       setAiSuggestion(null); 
@@ -187,9 +180,7 @@ export default function Viewer() {
         domtoimage.toJpeg(node, { 
             quality: 0.95,
             filter: (node: Node) => {
-                if (node instanceof HTMLElement && node.classList.contains('ui-layer')) {
-                    return false;
-                }
+                if (node instanceof HTMLElement && node.classList.contains('ui-layer')) return false;
                 return true;
             }
         }).then((dataUrl: string) => {
@@ -201,8 +192,18 @@ export default function Viewer() {
     };
 
   const handleUndo = () => {
-      setShapes(prev => prev.slice(0, -1));
+      const myShapes = shapes.map((s, i) => ({...s, originalIndex: i})).filter(s => s.author === currentUser || !s.author);
+      if (myShapes.length === 0) return;
+      const lastMyShape = myShapes[myShapes.length - 1];
+      const newShapes = shapes.filter((_, i) => i !== lastMyShape.originalIndex);
+      setShapes(newShapes);
   };
+
+  const handleDeleteAll = () => {
+      if(confirm("Voulez-vous supprimer VOS annotations ?")) {
+          setShapes(prev => prev.filter(s => s.author !== currentUser));
+      }
+  }
 
   const getCoords = (e: React.MouseEvent) => {
       const rect = document.getElementById("osd-container")!.getBoundingClientRect();
@@ -211,6 +212,8 @@ export default function Viewer() {
 
   const handleShapeMouseDown = (e: React.MouseEvent, index: number) => {
       if (currentTool !== 'move') return; 
+      if (shapes[index].author && shapes[index].author !== currentUser) return;
+
       e.stopPropagation(); 
       e.preventDefault();
       setMovingShapeIndex(index);
@@ -221,11 +224,9 @@ export default function Viewer() {
   const handleMouseDown = (e: React.MouseEvent) => {
       if (movingShapeIndex !== null) return; 
       if (!viewerRef.current) return;
-      
-      // Si on est en train d'éditer un texte, on ne dessine pas
       if (editingShapeIndex !== null) return;
-
       if (currentTool === 'move' || pendingTextPos) return;
+
       const { x, y } = getCoords(e);
       if (currentTool === 'text') { setPendingTextPos({x, y}); setTextValue(""); return; }
       if (currentTool === 'polygon') { setPolyPoints(prev => [...prev, {x, y}]); return; }
@@ -268,7 +269,14 @@ export default function Viewer() {
       const imageX = p1.x; const imageY = p1.y;
       const imageW = p2.x - p1.x; const imageH = p2.y - p1.y;
       const pRadius = viewerRef.current.viewport.deltaPointsFromPixels(new OpenSeadragon.Point(currentDragShape.radius || 0, 0));
-      const newShape: Shape = { type: currentTool, x: imageX, y: imageY, w: imageW, h: imageH, radius: pRadius.x };
+      
+      const newShape: Shape = { 
+          type: currentTool, 
+          x: imageX, y: imageY, w: imageW, h: imageH, 
+          radius: pRadius.x, 
+          author: currentUser 
+      };
+
       if (newShape.w > 5 || (newShape.radius && newShape.radius > 5)) {
           setShapes(prev => [...prev, newShape]); 
           if (!isAnnotationMode) { setCurrentTool('move'); setShowSidebar(true); }
@@ -282,14 +290,12 @@ export default function Viewer() {
               const pt = viewerRef.current!.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(p.x, p.y));
               return { x: pt.x, y: pt.y };
           });
-          setShapes(prev => [...prev, { type: 'polygon', x: 0, y: 0, w: 0, h: 0, points: imagePoints }]);
+          setShapes(prev => [...prev, { type: 'polygon', x: 0, y: 0, w: 0, h: 0, points: imagePoints, author: currentUser }]);
           setPolyPoints([]);
       }
   };
 
-  // --- CONFIRMATION TEXTE (CRÉATION ET ÉDITION) ---
   const confirmText = () => {
-      // Cas 1 : Édition d'un texte existant
       if (editingShapeIndex !== null) {
           if (textValue.trim() !== "") {
               const newShapes = [...shapes];
@@ -301,21 +307,22 @@ export default function Viewer() {
           return;
       }
 
-      // Cas 2 : Création d'un nouveau texte
       if (pendingTextPos && textValue.trim() !== "" && viewerRef.current) {
           const pt = viewerRef.current.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(pendingTextPos.x, pendingTextPos.y));
-          setShapes(prev => [...prev, { type: 'text', x: pt.x, y: pt.y, w:0, h:0, text: textValue }]);
+          setShapes(prev => [...prev, { type: 'text', x: pt.x, y: pt.y, w:0, h:0, text: textValue, author: currentUser }]);
       }
       setPendingTextPos(null); 
       setCurrentTool('move');
   };
 
   const startEditingText = (index: number) => {
+      if (shapes[index].author && shapes[index].author !== currentUser) return;
       if (!shapes[index].text) return;
       setEditingShapeIndex(index);
       setTextValue(shapes[index].text || "");
   };
 
+  // --- C'EST ICI QUE TOUT SE JOUE ---
   const renderShapes = () => {
       if (!viewerRef.current) return null;
       return shapes.map((shape, idx) => {
@@ -323,43 +330,101 @@ export default function Viewer() {
           const p2 = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x + shape.w, shape.y + shape.h));
           const sx = p1.x; const sy = p1.y; const sw = p2.x - p1.x; const sh = p2.y - p1.y;
           
-          if (shape.type === 'rect') return <rect key={idx} x={sx} y={sy} width={sw} height={sh} fill="rgba(16, 185, 129, 0.3)" stroke="#10b981" strokeWidth="3" />;
+          const isMe = shape.author === currentUser;
+          const strokeColor = isMe ? "#10b981" : "#f59e0b"; // Vert (Moi) / Orange (Autre)
+          const fillColor = isMe ? "rgba(16, 185, 129, 0.3)" : "rgba(245, 158, 11, 0.3)";
+          const cursorStyle = isMe && currentTool === 'move' ? 'grab' : 'not-allowed';
+
+          // Fonction pour afficher le label auteur
+          const renderAuthorLabel = (x: number, y: number) => {
+              if (!shape.author) return null;
+              return (
+                  <text 
+                    x={x} y={y - 5} 
+                    fill={strokeColor} 
+                    fontSize="14" 
+                    fontWeight="bold" 
+                    style={{ pointerEvents: "none", textShadow: "1px 1px 2px black" }}
+                  >
+                    {shape.author}
+                  </text>
+              );
+          };
+
+          if (shape.type === 'rect') return (
+              <g key={idx}>
+                  {renderAuthorLabel(sx, sy)}
+                  <rect 
+                    x={sx} y={sy} width={sw} height={sh} 
+                    fill={fillColor} stroke={strokeColor} strokeWidth="3" 
+                    onMouseDown={(e) => handleShapeMouseDown(e, idx)} 
+                    style={{ cursor: cursorStyle, pointerEvents: 'auto' }}
+                  />
+              </g>
+          );
           if (shape.type === 'circle') {
               const pr = viewerRef.current!.viewport.deltaPixelsFromPoints(new OpenSeadragon.Point(shape.radius || 0, 0));
-              return <circle key={idx} cx={sx} cy={sy} r={pr.x} fill="rgba(59, 130, 246, 0.3)" stroke="#3b82f6" strokeWidth="3" />;
+              return (
+                <g key={idx}>
+                    {renderAuthorLabel(sx - pr.x, sy - pr.x)}
+                    <circle 
+                        cx={sx} cy={sy} r={pr.x} 
+                        fill={fillColor} stroke={strokeColor} strokeWidth="3" 
+                        onMouseDown={(e) => handleShapeMouseDown(e, idx)}
+                        style={{ cursor: cursorStyle, pointerEvents: 'auto' }}
+                    />
+                </g>
+              );
           }
           if (shape.type === 'polygon' && shape.points) {
               const pts = shape.points.map(pt => {
                   const s = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(pt.x, pt.y));
                   return `${s.x},${s.y}`;
               }).join(' ');
-              return <polygon key={idx} points={pts} fill="rgba(245, 158, 11, 0.3)" stroke="#f59e0b" strokeWidth="3" />;
-          }
-          if (shape.type === 'text' && shape.text) {
-              // Si ce texte est en cours d'édition, on ne l'affiche pas (l'input le remplace)
-              if (editingShapeIndex === idx) return null;
+              
+              // On prend le premier point pour afficher le label
+              const firstPt = shape.points[0];
+              const sFirst = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(firstPt.x, firstPt.y));
               
               return (
-                  <text 
-                      key={idx} 
-                      x={sx} y={sy} 
-                      fill="#facc15" 
-                      fontSize="20" 
-                      fontWeight="bold" 
-                      onMouseDown={(e) => handleShapeMouseDown(e, idx)} 
-                      onDoubleClick={(e) => {
-                          e.stopPropagation();
-                          startEditingText(idx);
-                      }}
-                      style={{
-                          textShadow: '1px 1px 2px black', 
-                          cursor: currentTool === 'move' ? 'grab' : 'pointer', 
-                          pointerEvents: 'auto',
-                          userSelect: 'none'
-                      }}
-                  >
-                      {shape.text}
-                  </text>
+                <g key={idx}>
+                    {renderAuthorLabel(sFirst.x, sFirst.y)}
+                    <polygon 
+                        points={pts} fill={fillColor} stroke={strokeColor} strokeWidth="3" 
+                        onMouseDown={(e) => handleShapeMouseDown(e, idx)}
+                        style={{ cursor: cursorStyle, pointerEvents: 'auto' }}
+                    />
+                </g>
+              );
+          }
+          if (shape.type === 'text' && shape.text) {
+              if (editingShapeIndex === idx) return null;
+              return (
+                  <g key={idx}>
+                      {/* Petit label auteur au dessus du texte */}
+                      <text x={sx} y={sy - 20} fill={strokeColor} fontSize="12" fontWeight="bold">
+                          {shape.author}
+                      </text>
+                      <text 
+                          x={sx} y={sy} 
+                          fill={isMe ? "#facc15" : "#f87171"} 
+                          fontSize="20" 
+                          fontWeight="bold" 
+                          onMouseDown={(e) => handleShapeMouseDown(e, idx)} 
+                          onDoubleClick={(e) => {
+                              e.stopPropagation();
+                              startEditingText(idx);
+                          }}
+                          style={{
+                              textShadow: '1px 1px 2px black', 
+                              cursor: cursorStyle, 
+                              pointerEvents: 'auto',
+                              userSelect: 'none'
+                          }}
+                      >
+                          {shape.text}
+                      </text>
+                  </g>
               );
           }
           return null;
@@ -403,7 +468,6 @@ export default function Viewer() {
     setStaining(options);
   };
 
-  // --- ACTIONS MODALE SUCCÈS ---
   const handleGoToExtraction = () => {
     setShowSuccessModal(false);
     if (newExtractionId) {
@@ -475,13 +539,11 @@ export default function Viewer() {
                   setShowSuccessModal(true);
               } else {
                   alert("✅ Dossier mis à jour !");
-                  setShapes([]); 
                   navigate('/dashboard'); 
               }
           } else {
               alert("Erreur serveur lors de la sauvegarde.");
           }
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       } catch (err) { alert("Erreur réseau"); } 
       finally { setLoading(false); }
   };
@@ -489,7 +551,6 @@ export default function Viewer() {
   return (
     <div className="h-screen w-screen bg-black overflow-hidden flex font-sans text-white select-none">
       
-      {/* --- ZONE VIEWER (Gauche) --- */}
       <div id="osd-container" className="relative flex-grow h-full bg-black overflow-hidden" ref={containerRef}>
           <div id="openseadragon-viewer" className="absolute inset-0 z-0 bg-black" />
 
@@ -511,7 +572,7 @@ export default function Viewer() {
                 </div>
             )}
 
-            {/* Input Édition Texte Existant (Affiché sur le texte original) */}
+            {/* Input Édition Texte Existant */}
             {editingShapeIndex !== null && viewerRef.current && (() => {
                  const shape = shapes[editingShapeIndex];
                  const pt = viewerRef.current.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x, shape.y));
@@ -524,9 +585,23 @@ export default function Viewer() {
             })()}
           </div>
 
+          {/* LÉGENDE COLLABORATIVE */}
+          <div className="absolute top-4 left-4 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-3 rounded-xl shadow-xl pointer-events-none z-20">
+              <div className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-widest flex items-center gap-2">
+                 <PersonIcon fontSize="small"/> Collaboration
+              </div>
+              <div className="flex items-center gap-2 mb-1">
+                  <div className="w-3 h-3 rounded-full bg-[#10b981]"></div>
+                  <span className="text-xs text-white">Moi ({currentUser})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-[#f59e0b]"></div>
+                  <span className="text-xs text-white">Collègues</span>
+              </div>
+          </div>
+
           {/* BARRE D'OUTILS FLOTTANTE */}
           <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-20 pointer-events-none flex gap-4 ui-layer">
-             {/* ... Bouton retour ... */}
              <div className="pointer-events-auto bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-2xl p-2 flex items-center gap-4 shadow-2xl">
                 <button onClick={() => navigate('/dashboard')} className="p-2 hover:bg-white/10 rounded-xl transition-colors"><ArrowBackIcon /></button>
                 <div className="pr-4 border-r border-white/10">
@@ -535,7 +610,6 @@ export default function Viewer() {
                 </div>
              </div>
 
-             {/* ... Outils ... */}
              <div className="pointer-events-auto bg-slate-800/90 backdrop-blur-md border border-slate-600 rounded-2xl p-1.5 flex gap-2 shadow-2xl">
                 <button onClick={() => setCurrentTool('move')} className={`p-3 rounded-xl transition-all ${currentTool === 'move' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`} title="Déplacer"><PanToolIcon /></button>
                 <div className="w-px bg-white/10 mx-1 my-2"></div>
@@ -549,13 +623,11 @@ export default function Viewer() {
                 )}
              </div>
 
-             {/* ... Actions + IA ... */}
              <div className="pointer-events-auto flex gap-3">
                  <button onClick={handleDownloadSnapshot} className="p-3 bg-slate-800/90 backdrop-blur-md text-white border border-slate-600 rounded-2xl hover:bg-indigo-600 transition-all shadow-lg"><CameraAltIcon /></button>
                 {shapes.length > 0 && <button onClick={handleUndo} className="p-3 bg-slate-700/80 backdrop-blur-md text-white border border-slate-500 rounded-2xl hover:bg-slate-600 transition-all shadow-lg" title="Annuler dernier"><UndoIcon /></button>}
-                {shapes.length > 0 && <button onClick={() => setShapes([])} className="p-3 bg-red-500/20 text-red-400 border border-red-500/50 rounded-2xl hover:bg-red-500 hover:text-white"><DeleteForeverIcon /></button>}
+                {shapes.length > 0 && <button onClick={handleDeleteAll} className="p-3 bg-red-500/20 text-red-400 border border-red-500/50 rounded-2xl hover:bg-red-500 hover:text-white"><DeleteForeverIcon /></button>}
                 
-                {/* --- BOUTON IA (Seulement si mode Annotation) --- */}
                 {isAnnotationMode && (
                   <button 
                       onClick={handleAiAnalysis} 
@@ -573,7 +645,6 @@ export default function Viewer() {
           </div>
       </div>
 
-      {/* --- MODALE DE SUCCÈS --- */}
       {showSuccessModal && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-300">
             <div className="bg-slate-900 border border-slate-700 p-8 rounded-3xl shadow-2xl max-w-md w-full text-center relative">
@@ -595,7 +666,6 @@ export default function Viewer() {
         </div>
       )}
 
-      {/* --- ZONE SIDEBAR FORMULAIRE (Droite) --- */}
       {showSidebar && !showSuccessModal && (
           <div className="w-[450px] bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl z-20 animate-in slide-in-from-right duration-300">
               <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-950">
@@ -607,7 +677,6 @@ export default function Viewer() {
 
               <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
                   
-                  {/* --- BLOC IA --- */}
                   {aiSuggestion && (
                     <div className="bg-slate-800 border border-slate-600 rounded-xl p-4 mb-2">
                         <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2 mb-2">

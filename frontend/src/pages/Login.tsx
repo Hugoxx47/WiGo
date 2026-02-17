@@ -8,7 +8,6 @@ export default function Login() {
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    // 1. On sauvegarde le nom dans la mémoire du navigateur (LocalStorage)
     localStorage.setItem("biopsie_user", username);
     navigate('/dashboard');
   };
@@ -23,12 +22,13 @@ export default function Login() {
         </div>
         <form onSubmit={handleLogin} className="space-y-6">
           <div>
-            <label className="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Identifiant</label>
+            <label className="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Identifiant Médecin</label>
             <input 
               type="text" 
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full bg-slate-900/50 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
+              className="w-full bg-slate-900/50 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all font-bold"
+              placeholder="Ex: Dr. Wilson"
             />
           </div>          
           <div>
