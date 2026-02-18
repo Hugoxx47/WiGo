@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import VisibilityIcon from '@mui/icons-material/Visibility'; 
 import EditIcon from '@mui/icons-material/Edit'; 
@@ -35,9 +35,14 @@ interface Extraction {
 }
 
 const PatientCard = ({ patient }: { patient: Patient }) => {
+  if (!patient) {
+      return null;
+  }
+
   const navigate = useNavigate();
   const [extractions, setExtractions] = useState<Extraction[]>([]);
   const [showModal, setShowModal] = useState(false);
+  const [hasExtractions, setHasExtractions] = useState(false);
 
   const doctorName = localStorage.getItem("biopsie_user") || "Dr. Non assigné";
 
@@ -50,26 +55,38 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
     return { min: dateMin, max: dateMax };
   };
   const { min, max } = getDates();
-
   const getMotif = () => {
       const motifs = [ "Masse palpable (QSE)", "Microcalcifications ACR4", "Suivi Oncologique" ];
-      return patient.motif || motifs[patient.id % motifs.length];
+      const safeId = patient.id || 0; 
+      return patient.motif || motifs[safeId % motifs.length];
   };
   const motifConsultation = getMotif();
 
-  const handleAnnotateClick = async () => {
-    try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-      const response = await fetch(`${apiUrl}/patients/${patient.folder_id}/extractions`);
-      const data = await response.json();
+  useEffect(() => {
+    if (!patient.folder_id) return;
 
-      if (data.length === 0) {
-        openViewer(); 
-      } else {
-        setExtractions(data);
+    const checkExisting = async () => {
+        try {
+            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+            const res = await fetch(`${apiUrl}/patients/${patient.folder_id}/extractions`);
+            const data = await res.json();
+            if (data && data.length > 0) {
+                setHasExtractions(true);
+                setExtractions(data); 
+            } else {
+                setHasExtractions(false);
+            }
+        } catch (e) { console.error("Erreur check extractions", e); }
+    };
+    checkExisting();
+  }, [patient.folder_id]);
+
+  const handleAnnotateClick = async () => {
+    if (extractions.length > 0) {
         setShowModal(true);
-      }
-    } catch (error) { alert("Erreur de connexion au serveur."); }
+    } else {
+        openViewer(); 
+    }
   };
 
   const handleDeleteExtraction = async (id: number) => {
@@ -82,7 +99,9 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
         });
         
         if (res.ok) {
-            setExtractions(prev => prev.filter(ex => ex.id !== id));
+            const newExtractions = extractions.filter(ex => ex.id !== id);
+            setExtractions(newExtractions);
+            if (newExtractions.length === 0) setHasExtractions(false); 
         } else {
             const err = await res.json();
             alert("Erreur: " + err.detail);
@@ -91,7 +110,10 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
   };
 
   const openViewer = (extractionData?: Extraction) => {
-    const mainImageUrl = patient.biopsies[0]?.image_url || "biopsie_cmu_1.dzi";
+    const mainImageUrl = (patient.biopsies && patient.biopsies.length > 0) 
+        ? patient.biopsies[0].image_url 
+        : "biopsie_cmu_1.dzi";
+
     navigate(`/viewer?url=${encodeURIComponent(mainImageUrl)}`, {
         state: { 
             patientName: patient.name, 
@@ -103,13 +125,16 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
     });
   };
 
-  const mainBiopsyUrl = patient.biopsies.length > 0 ? patient.biopsies[0].image_url : "";
+  const mainBiopsyUrl = (patient.biopsies && patient.biopsies.length > 0) 
+      ? patient.biopsies[0].image_url 
+      : "";
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 hover:border-cyan-500/50 transition-all duration-300 shadow-lg flex flex-col gap-4 relative overflow-hidden group">
       
       <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 rounded-full blur-3xl group-hover:bg-cyan-500/10 transition-all"></div>
 
+      {/* HEADER */}
       <div className="flex justify-between items-start">
         <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center text-slate-300 ring-2 ring-slate-700">
@@ -122,6 +147,7 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
         </div>
       </div>
       
+      {/* INFO MÉDICALES */}
       <div className="bg-slate-950/50 rounded-xl p-4 border border-slate-800 space-y-3">
           <div className="flex justify-between items-center text-sm">
              <div className="flex items-center gap-2 text-slate-400"><MedicalServicesIcon fontSize="small" /><span>Médecin</span></div>
@@ -141,15 +167,20 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
           </div>
       </div>
 
+      {/* ACTIONS */}
       <div className="flex gap-3 mt-auto">
         <button onClick={() => mainBiopsyUrl && openViewer()} className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors">
             <VisibilityIcon fontSize="small"/> Nouvelle
         </button>
-        <button onClick={handleAnnotateClick} className="flex-1 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-cyan-900/20">
-            <EditIcon fontSize="small"/> Ouvrir
-        </button>
+        
+        {hasExtractions && (
+            <button onClick={handleAnnotateClick} className="flex-1 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-cyan-900/20">
+                <EditIcon fontSize="small"/> Ouvrir
+            </button>
+        )}
       </div>
 
+      {/* MODAL LISTE DES DOSSIERS */}
       {showModal && (
         <div className="fixed inset-0 bg-black/80 flex justify-center items-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
@@ -161,7 +192,6 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
             <ul className="max-h-60 overflow-y-auto p-2">
               {extractions.map((file, index) => (
                 <li key={index} className="mb-2 bg-slate-950 rounded-xl border border-slate-800 hover:border-cyan-500/50 transition-all flex items-center justify-between p-2 pl-3 group">
-                    {/* Zone de clic pour OUVRIR */}
                     <div className="flex items-center gap-3 cursor-pointer flex-grow" onClick={() => openViewer(file)}>
                         <div className="p-2 bg-slate-800 rounded-lg text-cyan-400 group-hover:text-white transition-colors">
                             <DescriptionIcon fontSize="small" />
@@ -177,10 +207,9 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
                         </div>
                     </div>
 
-                    {/* Zone de clic pour SUPPRIMER (Séparée) */}
                     {file.owner === doctorName && (
                         <button 
-                            onClick={() => handleDeleteExtraction(file.id)} 
+                            onClick={(e) => { e.stopPropagation(); handleDeleteExtraction(file.id); }} 
                             className="p-2 hover:bg-red-500/20 text-slate-600 hover:text-red-500 rounded-lg transition-colors ml-2"
                             title="Supprimer mon dossier"
                         >

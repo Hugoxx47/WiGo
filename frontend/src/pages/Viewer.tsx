@@ -587,7 +587,7 @@ export default function Viewer() {
           </div>
 
           {/* LÉGENDE COLLABORATIVE */}
-          <div className="absolute top-4 left-4 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-3 rounded-xl shadow-xl pointer-events-none z-20">
+          <div className={`absolute top-2 transition-all duration-300 ${showSidebar ? 'right-[470px]' : 'right-200'} bg-slate-900/90 backdrop-blur-md border border-slate-700 p-3 rounded-xl shadow-xl pointer-events-none`}>
               <div className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-widest flex items-center gap-2">
                  <PersonIcon fontSize="small"/> Collaboration
               </div>
