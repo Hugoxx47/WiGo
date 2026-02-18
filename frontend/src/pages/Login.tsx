@@ -4,10 +4,12 @@ import MedicalServicesIcon from '@mui/icons-material/MedicalServices';
 
 export default function Login() {
   const navigate = useNavigate();
-  const [username, setUsername] = useState("Dr. House");
+  const [username, setUsername] = useState("");
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!username.trim()) return; 
+    
     localStorage.setItem("biopsie_user", username);
     navigate('/dashboard');
   };
@@ -28,14 +30,16 @@ export default function Login() {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="w-full bg-slate-900/50 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all font-bold"
-              placeholder="Ex: Dr. Wilson"
+              placeholder="Dr.House"
+              required
             />
           </div>          
           <div>
             <label className="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Mot de passe</label>
             <input 
               type="password" 
-              defaultValue="password"
+              placeholder="••••••••"
+              required
               className="w-full bg-slate-900/50 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
             />
           </div>
