@@ -1,5 +1,6 @@
 import time
 import os
+import shutil # Pour supprimer le dossier physique
 import pyvips
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,7 +49,6 @@ class PatientSchema(BaseModel):
     class Config:
         from_attributes = True 
 
-# Schéma pour un dessin
 class DrawingSchema(BaseModel):
     type: str
     x: float
@@ -70,6 +70,8 @@ class AnalysisPayload(BaseModel):
     patient_name: str     
     annotation_label: str 
     extraction_id: Optional[int] = None
+    
+    owner: Optional[str] = "Inconnu" 
 
     # Champs Formulaire
     birth_date: Optional[str] = ""
@@ -93,7 +95,6 @@ class AnalysisPayload(BaseModel):
     pathologist: Optional[str] = ""
     validation_date: Optional[str] = ""
 
-    # LISTE DES DESSINS
     drawings: List[DrawingSchema] = []
 
 # --- ROUTES ---
@@ -137,7 +138,6 @@ def get_patients(db: Session = Depends(database.get_db)):
 
 @app.post("/extract-roi")
 def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
-    # 1. Gestion du Patient
     patient = db.query(models.Patient).filter(models.Patient.folder_id == data.patient_folder).first()
     if not patient:
         patient = models.Patient(name=data.patient_name, age=0, folder_id=data.patient_folder)
@@ -150,7 +150,6 @@ def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
     if data.medical_history: patient.medical_history = data.medical_history
     db.commit()
 
-    # 2. Sauvegarde de l'image (Fichier Physique)
     safe_folder = "".join(c for c in data.patient_folder if c.isalnum() or c in (' ', '-', '_')).strip()
     patient_dir = os.path.join(DZI_FOLDER, safe_folder, "extractions")
     os.makedirs(patient_dir, exist_ok=True)
@@ -168,7 +167,6 @@ def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
         except Exception as e:
             print(f"⚠️ Erreur extraction: {e}")
 
-    # 3. Sauvegarde de l'Extraction en BDD
     sc = data.slide_count if isinstance(data.slide_count, int) else None
 
     new_ext = models.Extraction(
@@ -176,6 +174,7 @@ def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
         label=data.annotation_label,
         dzi_url=f"{safe_folder}/extractions/{filename_str}",
         x=data.x, y=data.y, w=data.width, h=data.height,
+        owner=data.owner,
         prelevement_type=data.prelevement_type,
         prelevement_date=data.prelevement_date,
         block_number=data.block_number,
@@ -197,11 +196,6 @@ def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
     db.add(new_ext)
     db.commit()
     db.refresh(new_ext) 
-
-    # --- MODIFICATION ICI ---
-    # J'ai supprimé le bloc "if data.drawings:" qui était ici.
-    # On ne sauvegarde PAS les dessins lors de la création initiale.
-    # Cela permet à l'extraction d'être vierge (sans le rectangle vert).
     
     return {"message": "Dossier créé avec succès", "id": new_ext.id, "extraction_id": new_ext.id}
 
@@ -216,7 +210,6 @@ def update_analysis(data: AnalysisPayload, db: Session = Depends(database.get_db
 
     sc = data.slide_count if isinstance(data.slide_count, int) else None
 
-    # Mise à jour formulaire
     ext.prelevement_type = data.prelevement_type
     ext.prelevement_date = data.prelevement_date
     ext.block_number = data.block_number
@@ -235,7 +228,6 @@ def update_analysis(data: AnalysisPayload, db: Session = Depends(database.get_db
     ext.pathologist = data.pathologist
     ext.validation_date = data.validation_date
     
-    # ICI ON GARDE LA SAUVEGARDE (car c'est une mise à jour volontaire)
     db.query(models.Drawing).filter(models.Drawing.extraction_id == ext.id).delete()
     
     for d in data.drawings:
@@ -265,7 +257,8 @@ def get_extractions(folder_id: str, db: Session = Depends(database.get_db)):
             "url": f"http://localhost:8000/dzi_data/{e.dzi_url}",
             "roi": { "x": e.x, "y": e.y, "w": e.w, "h": e.h },
             "diagnosis": e.diagnosis,
-            "status": e.status
+            "status": e.status,
+            "owner": e.owner
         })
     return results
 
@@ -303,3 +296,28 @@ def get_details(extraction_id: int, db: Session = Depends(database.get_db)):
             } for d in ext.drawings
         ]
     }
+
+@app.delete("/extractions/{extraction_id}")
+def delete_extraction(extraction_id: int, username: str, db: Session = Depends(database.get_db)):
+    ext = db.query(models.Extraction).filter(models.Extraction.id == extraction_id).first()
+    
+    if not ext:
+        raise HTTPException(status_code=404, detail="Introuvable")
+    
+    if ext.owner != username:
+        raise HTTPException(status_code=403, detail="Vous ne pouvez supprimer que vos propres extractions")
+        
+    try:
+        file_path = os.path.join(DZI_FOLDER, ext.dzi_url)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            files_dir = file_path.replace(".svs", "_files").replace(".dzi", "_files")
+            if os.path.exists(files_dir):
+                shutil.rmtree(files_dir)
+    except Exception as e:
+        print(f"Erreur suppression fichiers: {e}")
+
+    db.delete(ext)
+    db.commit()
+    
+    return {"message": "Extraction supprimée"}

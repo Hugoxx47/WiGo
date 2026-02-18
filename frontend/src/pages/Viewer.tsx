@@ -212,6 +212,7 @@ export default function Viewer() {
 
   const handleShapeMouseDown = (e: React.MouseEvent, index: number) => {
       if (currentTool !== 'move') return; 
+      
       if (shapes[index].author && shapes[index].author !== currentUser) return;
 
       e.stopPropagation(); 
@@ -322,7 +323,6 @@ export default function Viewer() {
       setTextValue(shapes[index].text || "");
   };
 
-  // --- C'EST ICI QUE TOUT SE JOUE ---
   const renderShapes = () => {
       if (!viewerRef.current) return null;
       return shapes.map((shape, idx) => {
@@ -335,7 +335,7 @@ export default function Viewer() {
           const fillColor = isMe ? "rgba(16, 185, 129, 0.3)" : "rgba(245, 158, 11, 0.3)";
           const cursorStyle = isMe && currentTool === 'move' ? 'grab' : 'not-allowed';
 
-          // Fonction pour afficher le label auteur
+          // --- ETIQUETTE AUTEUR ---
           const renderAuthorLabel = (x: number, y: number) => {
               if (!shape.author) return null;
               return (
@@ -382,7 +382,6 @@ export default function Viewer() {
                   return `${s.x},${s.y}`;
               }).join(' ');
               
-              // On prend le premier point pour afficher le label
               const firstPt = shape.points[0];
               const sFirst = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(firstPt.x, firstPt.y));
               
@@ -401,7 +400,6 @@ export default function Viewer() {
               if (editingShapeIndex === idx) return null;
               return (
                   <g key={idx}>
-                      {/* Petit label auteur au dessus du texte */}
                       <text x={sx} y={sy - 20} fill={strokeColor} fontSize="12" fontWeight="bold">
                           {shape.author}
                       </text>
@@ -507,6 +505,9 @@ export default function Viewer() {
           patient_name: patientName, 
           annotation_label: labelInput,
           extraction_id: extractionId,
+          
+          owner: currentUser, // <--- C'EST ICI QU'ON SIGNE LE DOSSIER !
+
           prelevement_type: prelevementType,
           prelevement_date: prelevementDate,
           block_number: blockNumber,

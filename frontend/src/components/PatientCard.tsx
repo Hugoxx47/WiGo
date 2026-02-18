@@ -7,6 +7,7 @@ import PersonIcon from '@mui/icons-material/Person';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 import MedicalServicesIcon from '@mui/icons-material/MedicalServices';
 import AssignmentIcon from '@mui/icons-material/Assignment';
+import DeleteIcon from '@mui/icons-material/Delete';
 
 interface Biopsy {
   id: number;
@@ -30,6 +31,7 @@ interface Extraction {
   filename: string;
   roi: { x: number; y: number; w: number; h: number }; 
   status?: string; 
+  owner?: string;
 }
 
 const PatientCard = ({ patient }: { patient: Patient }) => {
@@ -39,7 +41,6 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
 
   const doctorName = localStorage.getItem("biopsie_user") || "Dr. Non assigné";
 
-  // 1. Dates (Simulées)
   const getDates = () => {
     const today = new Date();
     const dateMax = today.toLocaleDateString('fr-FR');
@@ -50,42 +51,43 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
   };
   const { min, max } = getDates();
 
-  // 3. MOTIF DE LA MALADIE 
   const getMotif = () => {
-      const motifs = [
-          "Masse palpable (QSE)",     
-          "Microcalcifications ACR4", 
-          "Suivi Oncologique" 
-      ];
+      const motifs = [ "Masse palpable (QSE)", "Microcalcifications ACR4", "Suivi Oncologique" ];
       return patient.motif || motifs[patient.id % motifs.length];
   };
   const motifConsultation = getMotif();
 
-  // --- NAVIGATION ---
   const handleAnnotateClick = async () => {
     try {
       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-      const url = `${apiUrl}/patients/${patient.folder_id}/extractions`;
-      
-      console.log(`🔍 Recherche extractions pour ${patient.folder_id} vers ${url}`);
-      
-      const response = await fetch(url);
+      const response = await fetch(`${apiUrl}/patients/${patient.folder_id}/extractions`);
       const data = await response.json();
-      
-      console.log("📦 Extractions trouvées :", data);
 
       if (data.length === 0) {
-        // Pas d'extraction existante => On en crée une
         openViewer(); 
       } else {
-        // Il y a des dossiers => On montre la liste pour choisir
         setExtractions(data);
         setShowModal(true);
       }
-    } catch (error) { 
-        console.error("Erreur Fetch Extractions:", error);
-        alert("Erreur de connexion au serveur."); 
-    }
+    } catch (error) { alert("Erreur de connexion au serveur."); }
+  };
+
+  const handleDeleteExtraction = async (id: number) => {
+    if (!confirm("Confirmer la suppression définitive ?")) return;
+
+    try {
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        const res = await fetch(`${apiUrl}/extractions/${id}?username=${encodeURIComponent(doctorName)}`, {
+            method: 'DELETE'
+        });
+        
+        if (res.ok) {
+            setExtractions(prev => prev.filter(ex => ex.id !== id));
+        } else {
+            const err = await res.json();
+            alert("Erreur: " + err.detail);
+        }
+    } catch (err) { alert("Erreur réseau"); }
   };
 
   const openViewer = (extractionData?: Extraction) => {
@@ -108,7 +110,6 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
       
       <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 rounded-full blur-3xl group-hover:bg-cyan-500/10 transition-all"></div>
 
-      {/* HEADER */}
       <div className="flex justify-between items-start">
         <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center text-slate-300 ring-2 ring-slate-700">
@@ -121,35 +122,17 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
         </div>
       </div>
       
-      {/* INFO MÉDICALES */}
       <div className="bg-slate-950/50 rounded-xl p-4 border border-slate-800 space-y-3">
-          
-          {/* Ligne Médecin */}
           <div className="flex justify-between items-center text-sm">
-             <div className="flex items-center gap-2 text-slate-400">
-                <MedicalServicesIcon fontSize="small" />
-                <span>Médecin</span>
-             </div>
+             <div className="flex items-center gap-2 text-slate-400"><MedicalServicesIcon fontSize="small" /><span>Médecin</span></div>
              <span className="font-semibold text-slate-200">{doctorName}</span>
           </div>
-
-          {/* Ligne Motif */}
           <div className="flex justify-between items-center text-sm border-t border-slate-800 pt-3">
-             <div className="flex items-center gap-2 text-slate-400">
-                <AssignmentIcon fontSize="small" />
-                <span>Motif</span>
-             </div>
-             <span className="font-semibold text-cyan-400 text-right text-xs truncate max-w-[150px]" title={motifConsultation}>
-                {motifConsultation}
-             </span>
+             <div className="flex items-center gap-2 text-slate-400"><AssignmentIcon fontSize="small" /><span>Motif</span></div>
+             <span className="font-semibold text-cyan-400 text-right text-xs truncate max-w-[150px]" title={motifConsultation}>{motifConsultation}</span>
           </div>
-
-          {/* Ligne Suivi */}
           <div className="flex justify-between items-center text-sm border-t border-slate-800 pt-3">
-             <div className="flex items-center gap-2 text-slate-400">
-                <CalendarTodayIcon fontSize="small" />
-                <span>Suivi</span>
-             </div>
+             <div className="flex items-center gap-2 text-slate-400"><CalendarTodayIcon fontSize="small" /><span>Suivi</span></div>
              <div className="text-right">
                 <div className="text-slate-200 font-mono text-xs">{min}</div>
                 <div className="text-slate-500 text-[10px] text-center leading-none">au</div>
@@ -158,7 +141,6 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
           </div>
       </div>
 
-      {/* ACTIONS */}
       <div className="flex gap-3 mt-auto">
         <button onClick={() => mainBiopsyUrl && openViewer()} className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors">
             <VisibilityIcon fontSize="small"/> Nouvelle
@@ -168,7 +150,6 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
         </button>
       </div>
 
-      {/* MODAL LISTE DES DOSSIERS */}
       {showModal && (
         <div className="fixed inset-0 bg-black/80 flex justify-center items-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
@@ -179,17 +160,33 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
             
             <ul className="max-h-60 overflow-y-auto p-2">
               {extractions.map((file, index) => (
-                <li key={index} className="mb-2">
-                  <button onClick={() => openViewer(file)} className="w-full text-left p-3 rounded-xl bg-slate-950 hover:bg-cyan-900/20 border border-slate-800 hover:border-cyan-500/50 transition-all group flex items-center gap-3">
-                    <div className="p-2 bg-slate-800 rounded-lg text-cyan-400 group-hover:text-white transition-colors">
-                        <DescriptionIcon fontSize="small" />
+                <li key={index} className="mb-2 bg-slate-950 rounded-xl border border-slate-800 hover:border-cyan-500/50 transition-all flex items-center justify-between p-2 pl-3 group">
+                    {/* Zone de clic pour OUVRIR */}
+                    <div className="flex items-center gap-3 cursor-pointer flex-grow" onClick={() => openViewer(file)}>
+                        <div className="p-2 bg-slate-800 rounded-lg text-cyan-400 group-hover:text-white transition-colors">
+                            <DescriptionIcon fontSize="small" />
+                        </div>
+                        <div className="flex flex-col">
+                            <span className="text-sm text-slate-300 group-hover:text-white font-bold">{file.filename}</span>
+                            <div className="flex items-center gap-2">
+                                <span className="text-[10px] bg-slate-800 px-2 py-0.5 rounded text-slate-400 border border-slate-700">
+                                    {file.owner || "Inconnu"}
+                                </span>
+                                <span className="text-[10px] text-slate-500">#{file.id}</span>
+                            </div>
+                        </div>
                     </div>
-                    <div className="flex flex-col">
-                        {/* Affiche le nom ET l'ID pour être sûr */}
-                        <span className="text-sm text-slate-300 group-hover:text-white font-bold">{file.filename}</span>
-                        <span className="text-[10px] text-slate-500">ID Analyse: #{file.id} • {file.status || "En cours"}</span>
-                    </div>
-                  </button>
+
+                    {/* Zone de clic pour SUPPRIMER (Séparée) */}
+                    {file.owner === doctorName && (
+                        <button 
+                            onClick={() => handleDeleteExtraction(file.id)} 
+                            className="p-2 hover:bg-red-500/20 text-slate-600 hover:text-red-500 rounded-lg transition-colors ml-2"
+                            title="Supprimer mon dossier"
+                        >
+                            <DeleteIcon fontSize="small" />
+                        </button>
+                    )}
                 </li>
               ))}
             </ul>

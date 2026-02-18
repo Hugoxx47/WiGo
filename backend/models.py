@@ -38,6 +38,8 @@ class Extraction(Base):
     h = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    owner = Column(String, nullable=True) 
+
     # Formulaire Médical
     prelevement_type = Column(String, nullable=True)
     prelevement_date = Column(String, nullable=True)
@@ -60,7 +62,6 @@ class Extraction(Base):
     validation_date = Column(String, nullable=True)
 
     patient = relationship("Patient", back_populates="extractions")
-    # Relation vers les dessins
     drawings = relationship("Drawing", back_populates="extraction", cascade="all, delete")
 
 class Drawing(Base):
