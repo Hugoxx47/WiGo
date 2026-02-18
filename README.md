@@ -1,162 +1,156 @@
 # 🔬 WiGo - Plateforme d'Analyse Collaborative de Biopsies
 
-![WiGo Status](https://img.shields.io/badge/Status-Prototype-blue) ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED) ![Stack](https://img.shields.io/badge/Stack-React%20%7C%20FastAPI%20%7C%20PostgreSQL-green)
+**WiGo** est une solution de **Pathologie Numérique** assistée par ordinateur. Elle permet la conversion, la visualisation et l'annotation collaborative d'images de biopsies haute résolution (Whole Slide Imaging).
 
-**WiGo** est une solution innovante de workflow no-code assisté par IA, conçue pour transformer le diagnostic anatomopathologique. Elle permet aux pathologistes et oncologues de collaborer de manière asynchrone (mode offline) sur des lames virtuelles haute résolution, sécurisant ainsi le diagnostic et accélérant la prise en charge des patients.
+Conçue pour les workflow médicaux complexes, elle assure la transition entre le stockage froid (MinIO) et la visualisation web instantanée (Deep Zoom) grâce à une architecture microservices robuste.
 
 ---
 
 ## 🚀 Fonctionnalités Clés
 
-### 1. Visualisation Haute Résolution (WSI)
-- **Deep Zooming :** Intégration d'**OpenSeadragon** pour la navigation fluide dans les images gigapixels (format `.dzi` / `.svs`).
-- **Mini-map :** Navigation contextuelle rapide sur la lame.
+### 1. Visualisation Ultra-Performante
 
-### 2. Collaboration "Asynchrone & Sécurisée"
-- **Logique Métier Avancée :** Système de droits stricts sur les annotations.
-    - Un médecin voit les annotations de ses confrères (code couleur **Orange**).
-    - Il ne peut modifier ou supprimer **que ses propres annotations** (code couleur **Vert**).
-    - Protection contre les suppressions accidentelles via des modales de confirmation.
-- **Attribution Automatique :** Chaque forme (carré, rond, polygone, texte) est signée numériquement par son auteur.
+* **Format Deep Zoom (DZI) :** Affichage fluide d'images gigapixels sans temps de chargement, grâce au tuilage pyramidal.
+* **Support SVS :** Prise en charge native des fichiers scanners standards (Aperio .svs).
+* **Navigation :** Zoom profond, panoramique et mini-map contextuelle via **OpenSeadragon**.
 
-### 3. Workflow Médical Structuré
-- **File d'attente intelligente :** Tableau de bord listant les patients et le statut de l'analyse (En cours, Terminé, Archivé).
-- **Formulaires Pathologiques :** Saisie standardisée des données (Type histologique, Grade SBR, Biomarqueurs).
-- **Gestion des cas :** Création de nouvelles extractions (ROI) ou révision de dossiers existants.
+### 2. Collaboration Médicale Sécurisée
 
-### 4. Architecture Robuste & Portable
-- **Conteneurisation Totale :** Déploiement "One-Click" via Docker Compose.
-- **Persistance des données :** Volumes Docker pour PostgreSQL et le stockage d'images (MinIO).
+* **Gestion des Rôles :**
+* **Mes annotations (Vert) :** Modifiables et supprimables.
+* **Annotations Confrères (Orange) :** Lecture seule, affichage du nom de l'auteur.
+
+
+* **Sécurité des Données :** Impossible de supprimer ou d'altérer le diagnostic d'un autre médecin.
+* **Workflow Clinique :** Suivi du statut des analyses (En cours, Terminé, Archivé) et formulaires pathologiques standardisés (Grade SBR, H&E/IHC, etc.).
+
+### 3. Dashboard Analytique
+
+* **Statistiques en temps réel :** Graphiques (Recharts) montrant la répartition des cas (Sains vs Critiques) et l'activité hebdomadaire.
+* **File d'attente intelligente :** Accès conditionnel aux dossiers (Bouton "Ouvrir" uniquement si une extraction existe).
 
 ---
 
-## 🛠️ Architecture Technique
+## 🏗️ Architecture Technique : Le Pipeline SVS → DZI
 
-Le projet repose sur une architecture micro-services moderne :
+L'innovation principale de WiGo réside dans sa gestion des fichiers lourds. Le navigateur ne peut pas lire un fichier `.svs` de 2Go directement. Nous utilisons un pipeline de conversion asynchrone.
 
-```mermaid
-graph TD
-    Client[Client Web (React/Vite)] -->|HTTP/REST| API[API Gateway (FastAPI)]
-    API -->|SQL| DB[(PostgreSQL)]
-    API -->|File Storage| MinIO[(MinIO / S3)]
-    API -->|Image Processing| PyVips[Traitement DZI]
+### Comprendre le Flux de Données
 
-```
+1. **Le Coffre-Fort (MinIO / S3) :**
+* Stocke le fichier original **`CMU-1.svs`** (la "source brute").
+* C'est la référence légale et médicale inaltérable.
 
-### Stack Technologique
 
-* **Frontend :** React 18, TypeScript, TailwindCSS, Material UI, Recharts.
-* **Backend :** Python 3.9, FastAPI, SQLAlchemy, Pydantic.
-* **Traitement Image :** LibVips (conversion performante SVS -> DZI).
-* **Base de Données :** PostgreSQL 15.
-* **Infrastructure :** Docker & Docker Compose.
+2. **Le Convertisseur (Backend Python) :**
+* Au démarrage, le script `generate_dzi.py` télécharge le fichier depuis MinIO.
+* Il utilise **LibVips (PyVips)** pour découper l'image en milliers de petites tuiles `.jpeg`.
+
+
+3. **Le Serveur de Tuiles (Volume Docker) :**
+* Le résultat est stocké dans `backend/dzi_data/`.
+* Il contient un fichier manifeste `.dzi` (XML) et un dossier `_files` avec les niveaux de zoom (0 à 16).
+
+
+4. **Le Visualiseur (Frontend React) :**
+* OpenSeadragon ne télécharge pas l'image entière. Il requête uniquement les petites tuiles `.jpeg` correspondant à la zone que le médecin regarde.
+
+
+
+> **En résumé :**
+> * **MinIO** = La "Vache" entière (Stockage froid).
+> * **DZI/Local** = Les "Steaks hachés" prêts à consommer (Stockage chaud).
+> * **Viewer** = Le Client qui consomme les tuiles à la demande.
+> 
+> 
+
+---
+
+## 🛠️ Stack Technologique
+
+| Couche | Technologies |
+| --- | --- |
+| **Frontend** | React 18, TypeScript, Vite, TailwindCSS, Material UI, OpenSeadragon |
+| **Backend** | Python 3.10, FastAPI, SQLAlchemy, Pydantic |
+| **Traitement** | **PyVips** (Traitement d'images haute performance) |
+| **Base de Données** | **PostgreSQL 15** (Données structurées & Annotations JSON) |
+| **Stockage Objet** | **MinIO** (Compatible Amazon S3) |
+| **Infra** | Docker, Docker Compose |
 
 ---
 
 ## 📦 Installation & Démarrage
 
-Ce projet est conçu pour être lancé instantanément sur n'importe quelle machine disposant de Docker.
-
 ### Prérequis
 
-* [Docker Desktop](https://www.docker.com/products/docker-desktop/) installé et lancé.
-* Le fichier de biopsie **`CMU-1.svs`** doit être placé dans le dossier `backend/` avant de lancer.
+* Docker & Docker Compose installés.
+* Un fichier de biopsie nommé **`CMU-1.svs`** placé à la racine du dossier `backend/` (ou disponible dans votre bucket MinIO configuré).
 
-### 1. Démarrage de l'application
-
-Ouvrez un terminal à la racine du projet et lancez :
+### 1. Lancement
 
 ```bash
+# Construire et lancer les conteneurs
 docker compose up -d --build
 
 ```
 
-> ☕ **Prenez un café :** La première construction peut prendre quelques minutes (téléchargement des images de base et compilation).
+### 2. Initialisation (Seed)
 
-### 2. Initialisation des Données (Seed)
+Pour peupler la base de données avec des médecins et des patients fictifs :
 
-Une fois les conteneurs lancés ("Up"), injectez les données de test (Patients fictifs, Dossiers, Médecins) :
+* **Via l'API :** `POST http://localhost:8000/seed`
+* **Via Swagger :** Allez sur [http://localhost:8000/docs](https://www.google.com/search?q=http://localhost:8000/docs), cherchez `/seed` et cliquez sur "Execute".
 
-**Option A (Via Navigateur - Recommandé) :**
+### 3. Accès
 
-1. Allez sur le Swagger de l'API : [http://localhost:8000/docs](https://www.google.com/search?q=http://localhost:8000/docs)
-2. Cherchez la route verte **`POST /seed`**.
-3. Cliquez sur **"Try it out"** puis **"Execute"**.
-
-**Option B (Via Terminal Windows) :**
-
-```powershell
-curl.exe -X POST http://localhost:8000/seed
-
-```
-
-### 3. Accès à la plateforme
-
-Ouvrez votre navigateur sur : **[http://localhost:5173](https://www.google.com/search?q=http://localhost:5173)**
+* **Frontend (App) :** [http://localhost:5173](https://www.google.com/search?q=http://localhost:5173)
+* **Backend (Docs) :** [http://localhost:8000/docs](https://www.google.com/search?q=http://localhost:8000/docs)
+* **MinIO (Console) :** [http://localhost:9001](https://www.google.com/search?q=http://localhost:9001)
 
 ---
 
-## 📖 Guide d'Utilisation (Scénario de Démo)
+## 📖 Guide du Médecin (Démo)
 
-Pour démontrer la logique collaborative, suivez ces étapes :
-
-### Phase 1 : Le Diagnostic Initial
-
-1. Connectez-vous avec l'identifiant : **`Dr. Kennedy`**.
-2. Sélectionnez le patient **"Jean Dupont"**.
-3. Cliquez sur **"Nouvelle"** pour créer une nouvelle zone d'analyse.
-4. Utilisez l'outil **Rectangle** pour entourer une zone suspecte.
-5. Cliquez sur **"Créer l'extraction"**.
-6. Déconnectez-vous.
-
-### Phase 2 : La Contre-Expertise (Second Avis)
-
-1. Connectez-vous avec l'identifiant : **`Dr. House`**.
-2. Sur la carte de "Jean Dupont", le bouton **"Ouvrir"** est apparu. Cliquez dessus.
-3. Sélectionnez le dossier créé par Kennedy dans la liste.
-4. **Observez la collaboration :**
-* L'annotation de Kennedy apparaît en **Orange** (indiquant qu'elle appartient à un collègue).
-* Une étiquette "Dr. Kennedy" est affichée au-dessus.
-* Impossible de la déplacer ou de la modifier (Curseur interdit 🚫).
+1. **Connexion :** Entrez un nom d'utilisateur (ex: "Dr. House").
+2. **Dashboard :** Sélectionnez le patient "Jean Dupont" (ID: CMU-1).
+3. **Nouvelle Analyse :** Cliquez sur "Nouvelle" pour générer une extraction.
+4. **Annotation :**
+* Utilisez les outils (Rectangle, Cercle) pour marquer une zone.
+* Remplissez le formulaire à droite (Diagnostic, Observations).
+* Cliquez sur **"Créer l'extraction"**.
 
 
-5. Ajoutez votre propre annotation (Cercle). Elle s'affiche en **Vert** ("Moi").
-6. Cliquez sur **"Mettre à jour"**.
+5. **Simulation Collaboration :**
+* Ouvrez une nouvelle fenêtre privée.
+* Connectez-vous en tant que "Dr. Wilson".
+* Ouvrez le même dossier. Vous verrez les annotations du Dr. House en **Orange** (Lecture seule).
+* Ajoutez une annotation par-dessus : elle sera en **Vert** (Votre propriété).
+
+
 
 ---
 
-## 📂 Structure du Projet
+## 📂 Structure des Dossiers
 
 ```text
 Projet6/
-├── backend/                # API Python & Logique métier
-│   ├── main.py             # Point d'entrée FastAPI
-│   ├── models.py           # Modèles de BDD (User, Extraction, Drawing...)
-│   ├── database.py         # Connexion Postgres
-│   └── dzi_data/           # Stockage des images tuilées
-├── frontend/               # Interface Utilisateur React
+├── backend/
+│   ├── dzi_data/           # Volume partagé contenant les tuiles générées
+│   │   ├── CMU-1/          # Dossier par patient
+│   │   └── biopsie_cmu_1.dzi
+│   ├── main.py             # API FastAPI (Routes & Logique)
+│   ├── generate_dzi.py     # Script ETL (MinIO -> PyVips -> DZI)
+│   ├── models.py           # Schémas de Base de données (SQLAlchemy)
+│   └── Dockerfile
+├── frontend/
 │   ├── src/
-│   │   ├── components/     # Composants réutilisables (PatientCard...)
-│   │   ├── pages/          # Pages principales (Dashboard, Viewer, Login)
-│   │   └── services/       # Appels API
-├── docker-compose.yml      # Orchestration des conteneurs
-└── README.md               # Documentation
+│   │   ├── components/     # Viewer, Dashboard, PatientCard...
+│   │   └── services/       # Appels API (Axios/Fetch)
+│   └── Dockerfile
+└── docker-compose.yml      # Orchestration
 
 ```
 
 ---
 
-## 🔮 Roadmap / Prochaines Étapes
-
-* [ ] **Sécurité :** Chiffrement des données patients au repos (AES-256).
-* [ ] **IA :** Intégration réelle du modèle de segmentation pour la pré-annotation automatique des tumeurs.
-* [ ] **Messagerie :** Ajout d'un chat temps réel (WebSocket) associé à chaque extraction.
-* [ ] **Export :** Génération PDF du rapport final standardisé.
-
----
-
-**WiGo** - *Innovation Lab for Health*
-
-```
-
-```
+**WiGo** - *Plateforme de démonstration technique pour l'analyse de biopsies.*
