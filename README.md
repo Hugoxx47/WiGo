@@ -1,89 +1,162 @@
-# 🔬 Projet 6 : Détection de Pathologies par IA
+# 🔬 WiGo - Plateforme d'Analyse Collaborative de Biopsies
 
-Application web d'aide au diagnostic permettant aux pathologistes de visualiser des biopsies géantes (WSI) et de simuler une analyse IA.
+![WiGo Status](https://img.shields.io/badge/Status-Prototype-blue) ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED) ![Stack](https://img.shields.io/badge/Stack-React%20%7C%20FastAPI%20%7C%20PostgreSQL-green)
 
-## 📋 Prérequis
-
-1.  **Docker Desktop** doit être installé et lancé.
-2.  Le fichier de biopsie **`CMU-1.svs`** (téléchargeable sur OpenSlide).
+**WiGo** est une solution innovante de workflow no-code assisté par IA, conçue pour transformer le diagnostic anatomopathologique. Elle permet aux pathologistes et oncologues de collaborer de manière asynchrone (mode offline) sur des lames virtuelles haute résolution, sécurisant ainsi le diagnostic et accélérant la prise en charge des patients.
 
 ---
 
-## ⚙️ Installation Rapide (3 minutes)
+## 🚀 Fonctionnalités Clés
 
-### 1. Préparation du fichier
-Place le fichier **`CMU-1.svs`** directement dans le dossier :
-`Projet6/backend/`
+### 1. Visualisation Haute Résolution (WSI)
+- **Deep Zooming :** Intégration d'**OpenSeadragon** pour la navigation fluide dans les images gigapixels (format `.dzi` / `.svs`).
+- **Mini-map :** Navigation contextuelle rapide sur la lame.
 
-*(C'est indispensable pour que le convertisseur le trouve)*.
+### 2. Collaboration "Asynchrone & Sécurisée"
+- **Logique Métier Avancée :** Système de droits stricts sur les annotations.
+    - Un médecin voit les annotations de ses confrères (code couleur **Orange**).
+    - Il ne peut modifier ou supprimer **que ses propres annotations** (code couleur **Vert**).
+    - Protection contre les suppressions accidentelles via des modales de confirmation.
+- **Attribution Automatique :** Chaque forme (carré, rond, polygone, texte) est signée numériquement par son auteur.
 
-### 2. Démarrage de l'infrastructure
-Ouvre un terminal (PowerShell ou VS Code) à la racine du projet et lance :
+### 3. Workflow Médical Structuré
+- **File d'attente intelligente :** Tableau de bord listant les patients et le statut de l'analyse (En cours, Terminé, Archivé).
+- **Formulaires Pathologiques :** Saisie standardisée des données (Type histologique, Grade SBR, Biomarqueurs).
+- **Gestion des cas :** Création de nouvelles extractions (ROI) ou révision de dossiers existants.
 
-`docker-compose up -d --build`
-
-*Attends que tous les conteneurs (frontend, backend, postgres, orthanc) soient verts (environ 1-2 minutes la première fois).*
-
-### 3. Conversion de l'image (Une seule fois)
-Cette étape transforme le fichier .svs en format médical DICOM et l'envoie dans le serveur Orthanc.
-
-`docker exec p6_backend python -u convert_wsi.py`
-
-*Attends de voir le message : 🎉 SUCCÈS ! Image HD envoyée à Orthanc.*
-
-### 4. Création des patients (Seed)
-Cette étape remplit la base de données avec les patients fictifs (Jean Dupont, etc.) et lie l'image.
-
-`Invoke-RestMethod -Method POST -Uri "http://localhost:8000/seed"`
-
-*(Si cette commande échoue sur ton PC, va simplement sur https://www.google.com/search?q=http://localhost:8000/docs, cherche POST /seed et clique sur "Execute").*
+### 4. Architecture Robuste & Portable
+- **Conteneurisation Totale :** Déploiement "One-Click" via Docker Compose.
+- **Persistance des données :** Volumes Docker pour PostgreSQL et le stockage d'images (MinIO).
 
 ---
 
-## 🖥️ Accès à l'application
-Site Web (Dashboard) : http://localhost:5173
+## 🛠️ Architecture Technique
 
-Serveur PACS (Orthanc) : http://localhost:8042
+Le projet repose sur une architecture micro-services moderne :
 
-Login : orthanc
+```mermaid
+graph TD
+    Client[Client Web (React/Vite)] -->|HTTP/REST| API[API Gateway (FastAPI)]
+    API -->|SQL| DB[(PostgreSQL)]
+    API -->|File Storage| MinIO[(MinIO / S3)]
+    API -->|Image Processing| PyVips[Traitement DZI]
 
-Password : orthanc
+```
 
-Dans Orthanc cliquer sur Lookup en haut à gauche puis sur Do lookup et cliquer sur Jean Dupont avancer dans les onglets jusqu'à arriver sur DICOM Tags et cliquer sur Preview the instance en bas à gauche pour voir l'image.
+### Stack Technologique
 
-API Documentation (Swagger) : http://localhost:8000/docs
-
----
-
-## 🛠️ Commandes Utiles
-#### Éteindre l'application
-Pour arrêter les serveurs sans rien effacer :
-
-`docker-compose stop`
-
-#### Tout nettoyer (Reset complet)
-
-Si l'application bug ou si tu veux repartir de zéro (efface la base de données et les images) :
-
-`docker-compose down -v`
-
-Ensuite, il faut relancer l'installation depuis l'étape 2.
-
-#### Voir les logs (en cas de problème)
-
-Pour voir ce qui se passe dans le backend :
-
-`docker logs -f p6_backend`
+* **Frontend :** React 18, TypeScript, TailwindCSS, Material UI, Recharts.
+* **Backend :** Python 3.9, FastAPI, SQLAlchemy, Pydantic.
+* **Traitement Image :** LibVips (conversion performante SVS -> DZI).
+* **Base de Données :** PostgreSQL 15.
+* **Infrastructure :** Docker & Docker Compose.
 
 ---
 
-## 🏗️ Architecture Technique
-L'application tourne entièrement dans des conteneurs Docker isolés :
+## 📦 Installation & Démarrage
 
-Frontend (Port 5173) : React + Vite + CornerstoneJS (Visualiseur médical).
+Ce projet est conçu pour être lancé instantanément sur n'importe quelle machine disposant de Docker.
 
-Backend (Port 8000) : Python FastAPI. Gère la logique et la conversion d'images.
+### Prérequis
 
-PostgreSQL (Port 5432) : Base de données des patients et des analyses.
+* [Docker Desktop](https://www.docker.com/products/docker-desktop/) installé et lancé.
+* Le fichier de biopsie **`CMU-1.svs`** doit être placé dans le dossier `backend/` avant de lancer.
 
-Orthanc (Port 8042) : Serveur PACS standard pour le stockage des images médicales DICOM.
+### 1. Démarrage de l'application
+
+Ouvrez un terminal à la racine du projet et lancez :
+
+```bash
+docker compose up -d --build
+
+```
+
+> ☕ **Prenez un café :** La première construction peut prendre quelques minutes (téléchargement des images de base et compilation).
+
+### 2. Initialisation des Données (Seed)
+
+Une fois les conteneurs lancés ("Up"), injectez les données de test (Patients fictifs, Dossiers, Médecins) :
+
+**Option A (Via Navigateur - Recommandé) :**
+
+1. Allez sur le Swagger de l'API : [http://localhost:8000/docs](https://www.google.com/search?q=http://localhost:8000/docs)
+2. Cherchez la route verte **`POST /seed`**.
+3. Cliquez sur **"Try it out"** puis **"Execute"**.
+
+**Option B (Via Terminal Windows) :**
+
+```powershell
+curl.exe -X POST http://localhost:8000/seed
+
+```
+
+### 3. Accès à la plateforme
+
+Ouvrez votre navigateur sur : **[http://localhost:5173](https://www.google.com/search?q=http://localhost:5173)**
+
+---
+
+## 📖 Guide d'Utilisation (Scénario de Démo)
+
+Pour démontrer la logique collaborative, suivez ces étapes :
+
+### Phase 1 : Le Diagnostic Initial
+
+1. Connectez-vous avec l'identifiant : **`Dr. Kennedy`**.
+2. Sélectionnez le patient **"Jean Dupont"**.
+3. Cliquez sur **"Nouvelle"** pour créer une nouvelle zone d'analyse.
+4. Utilisez l'outil **Rectangle** pour entourer une zone suspecte.
+5. Cliquez sur **"Créer l'extraction"**.
+6. Déconnectez-vous.
+
+### Phase 2 : La Contre-Expertise (Second Avis)
+
+1. Connectez-vous avec l'identifiant : **`Dr. House`**.
+2. Sur la carte de "Jean Dupont", le bouton **"Ouvrir"** est apparu. Cliquez dessus.
+3. Sélectionnez le dossier créé par Kennedy dans la liste.
+4. **Observez la collaboration :**
+* L'annotation de Kennedy apparaît en **Orange** (indiquant qu'elle appartient à un collègue).
+* Une étiquette "Dr. Kennedy" est affichée au-dessus.
+* Impossible de la déplacer ou de la modifier (Curseur interdit 🚫).
+
+
+5. Ajoutez votre propre annotation (Cercle). Elle s'affiche en **Vert** ("Moi").
+6. Cliquez sur **"Mettre à jour"**.
+
+---
+
+## 📂 Structure du Projet
+
+```text
+Projet6/
+├── backend/                # API Python & Logique métier
+│   ├── main.py             # Point d'entrée FastAPI
+│   ├── models.py           # Modèles de BDD (User, Extraction, Drawing...)
+│   ├── database.py         # Connexion Postgres
+│   └── dzi_data/           # Stockage des images tuilées
+├── frontend/               # Interface Utilisateur React
+│   ├── src/
+│   │   ├── components/     # Composants réutilisables (PatientCard...)
+│   │   ├── pages/          # Pages principales (Dashboard, Viewer, Login)
+│   │   └── services/       # Appels API
+├── docker-compose.yml      # Orchestration des conteneurs
+└── README.md               # Documentation
+
+```
+
+---
+
+## 🔮 Roadmap / Prochaines Étapes
+
+* [ ] **Sécurité :** Chiffrement des données patients au repos (AES-256).
+* [ ] **IA :** Intégration réelle du modèle de segmentation pour la pré-annotation automatique des tumeurs.
+* [ ] **Messagerie :** Ajout d'un chat temps réel (WebSocket) associé à chaque extraction.
+* [ ] **Export :** Génération PDF du rapport final standardisé.
+
+---
+
+**WiGo** - *Innovation Lab for Health*
+
+```
+
+```
