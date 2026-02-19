@@ -6,14 +6,6 @@
   --color-neon-blue: #0ea5e9;
 }
 
-html, body, #root {
-  height: 100%;
-  width: 100%;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-}
-
 body {
   @apply bg-med-dark text-slate-200 font-sans;
 }

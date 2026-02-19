@@ -1,107 +1,53 @@
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+import time
 import os
-
-from fastapi import Depends, FastAPI, HTTPException, Query
+import shutil # Pour supprimer le dossier physique
+import pyvips
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
-from sqlalchemy import func
-from sqlalchemy.orm import Session, selectinload
-
-import database
+from fastapi.staticfiles import StaticFiles 
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from typing import List, Optional, Any, Dict
 import models
+import database
 
-
+# --- INIT BDD ---
 try:
     models.Base.metadata.create_all(bind=database.engine)
     print("✅ Base de données connectée.")
-except Exception as error:
-    print(f"❌ ERREUR FATALE BDD : {error}")
+except Exception as e:
+    print(f"❌ ERREUR FATALE BDD : {e}")
 
-
-app = FastAPI(title="Biopsie Workflow API")
+app = FastAPI()
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    CORSMiddleware, allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
 )
 
 DZI_FOLDER = "/app/dzi_data"
 os.makedirs(DZI_FOLDER, exist_ok=True)
 app.mount("/dzi_data", StaticFiles(directory=DZI_FOLDER), name="dzi_data")
 
-
-class UserCreate(BaseModel):
-    name: str
-    role: models.UserRole
-
-
-class UserOut(BaseModel):
+# --- SCHEMAS ---
+class BiopsySchema(BaseModel):
     id: int
-    name: str
-    role: models.UserRole
-
+    image_url: Optional[str] = None
+    status: str
     class Config:
         from_attributes = True
 
-
-class LoginRequest(BaseModel):
+class PatientSchema(BaseModel):
+    id: int
     name: str
-
-
-class FormTemplateCreate(BaseModel):
-    title: str
-    schema_json: Dict[str, Any]
-
-
-class FormTemplateOut(BaseModel):
-    id: int
-    title: str
-    schema_json: Dict[str, Any]
-
+    age: int
+    folder_id: str
+    birth_date: Optional[str] = None
+    family_history: Optional[str] = None
+    medical_history: Optional[str] = None
+    biopsies: List[BiopsySchema] = [] 
     class Config:
-        from_attributes = True
-
-
-class WorkflowCreate(BaseModel):
-    title: str
-    steps_json: List[Dict[str, Any]]
-
-
-class WorkflowOut(BaseModel):
-    id: int
-    title: str
-    steps_json: List[Dict[str, Any]]
-
-    class Config:
-        from_attributes = True
-
-
-class MedicalCaseCreate(BaseModel):
-    patient_id: int
-    workflow_id: int
-    current_step: int = 1
-    status: models.CaseStatus = models.CaseStatus.open
-    data_jsonb: Dict[str, Any] = Field(default_factory=dict)
-
-
-class SubmitStepPayload(BaseModel):
-    step_data: Dict[str, Any]
-
-
-class MedicalCaseOut(BaseModel):
-    id: int
-    current_step: int
-    status: models.CaseStatus
-    data_jsonb: Dict[str, Any]
-    patient: UserOut
-    workflow: WorkflowOut
-    current_step_meta: Optional[Dict[str, Any]] = None
-
+        from_attributes = True 
 
 class DrawingSchema(BaseModel):
     type: str
@@ -114,7 +60,6 @@ class DrawingSchema(BaseModel):
     points: Optional[List[Dict[str, float]]] = []
     author: Optional[str] = "Inconnu"
 
-
 class AnalysisPayload(BaseModel):
     filename: str
     x: int
@@ -122,16 +67,21 @@ class AnalysisPayload(BaseModel):
     width: int
     height: int
     patient_folder: str
-    patient_name: str
-    annotation_label: str
+    patient_name: str     
+    annotation_label: str 
     extraction_id: Optional[int] = None
-    owner: Optional[str] = "Inconnu"
+    
+    owner: Optional[str] = "Inconnu" 
 
+    # Champs Formulaire
+    birth_date: Optional[str] = ""
+    family_history: Optional[str] = ""
+    medical_history: Optional[str] = ""
     prelevement_type: Optional[str] = ""
     prelevement_date: Optional[str] = ""
     block_number: Optional[str] = ""
     fixation: Optional[str] = ""
-    slide_count: Optional[int] = None
+    slide_count: Optional[Any] = None 
     staining: Optional[List[str]] = []
     macro_obs: Optional[str] = ""
     micro_obs: Optional[str] = ""
@@ -147,510 +97,227 @@ class AnalysisPayload(BaseModel):
 
     drawings: List[DrawingSchema] = []
 
-
-def get_current_step_meta(workflow: models.WorkflowDefinition, current_step: int) -> Optional[Dict[str, Any]]:
-    steps = workflow.steps_json or []
-    for step in steps:
-        if int(step.get("step", 0)) == current_step:
-            return step
-
-    index = current_step - 1
-    if 0 <= index < len(steps):
-        return steps[index]
-
-    return None
-
-
-def serialize_case(item: models.MedicalCase) -> Dict[str, Any]:
-    step_meta = get_current_step_meta(item.workflow, item.current_step)
-    return {
-        "id": item.id,
-        "current_step": item.current_step,
-        "status": item.status,
-        "data_jsonb": item.data_jsonb or {},
-        "patient": {
-            "id": item.patient.id,
-            "name": item.patient.name,
-            "role": item.patient.role,
-        },
-        "workflow": {
-            "id": item.workflow.id,
-            "title": item.workflow.title,
-            "steps_json": item.workflow.steps_json,
-        },
-        "current_step_meta": step_meta,
-    }
-
-
-def serialize_extraction_detail(record: models.ExtractionRecord) -> Dict[str, Any]:
-    form_json = record.form_json or {}
-    return {
-        "id": record.id,
-        "filename": record.annotation_label or record.filename,
-        "prelevement_type": form_json.get("prelevement_type", ""),
-        "prelevement_date": form_json.get("prelevement_date", ""),
-        "block_number": form_json.get("block_number", ""),
-        "fixation": form_json.get("fixation", ""),
-        "slide_count": form_json.get("slide_count"),
-        "staining": form_json.get("staining", []),
-        "macro_obs": form_json.get("macro_obs", ""),
-        "micro_obs": form_json.get("micro_obs", ""),
-        "histo_type": form_json.get("histo_type", ""),
-        "sbr_grade": form_json.get("sbr_grade", ""),
-        "margins": form_json.get("margins", ""),
-        "hormonal_receptors": form_json.get("hormonal_receptors", ""),
-        "diagnosis": form_json.get("diagnosis", ""),
-        "comments": form_json.get("comments", ""),
-        "status": form_json.get("status", ""),
-        "pathologist": form_json.get("pathologist", ""),
-        "validation_date": form_json.get("validation_date", ""),
-        "drawings": record.drawings_json or [],
-    }
-
-
+# --- ROUTES ---
 @app.post("/seed")
 def seed_database(db: Session = Depends(database.get_db)):
-    models.Base.metadata.drop_all(bind=database.engine)
-    models.Base.metadata.create_all(bind=database.engine)
+    try:
+        models.Base.metadata.drop_all(bind=database.engine)
+        models.Base.metadata.create_all(bind=database.engine)
+        
+        patients_data = [
+            {"name": "Jean Dupont", "age": 65, "folder": "CMU-1", "birth": "1958-05-12", "family": "Non", "med": "Hypertension"},
+            {"name": "Marie Curie", "age": 58, "folder": "CASE-2", "birth": "1965-11-07", "family": "Oui", "med": "Suivi annuel"},
+            {"name": "Paul Martin", "age": 42, "folder": "X-99", "birth": "1982-02-23", "family": "Non", "med": "RAS"}
+        ]
+        
+        default_image = "biopsie_cmu_1.dzi"
+        
+        count = 0
+        for p in patients_data:
+            patient = models.Patient(
+                name=p["name"], age=p["age"], folder_id=p["folder"],
+                birth_date=p["birth"], family_history=p["family"], medical_history=p["med"]
+            )
+            db.add(patient)
+            db.commit()
+            db.refresh(patient)
+            
+            biopsy = models.Biopsy(patient_id=patient.id, image_url=default_image, status="Non analysé")
+            db.add(biopsy)
+            count += 1
+        
+        db.commit()
+        return {"message": f"Succès ! BDD Réinitialisée avec {count} patients."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
-    users = [
-        models.User(name="Admin Olivia", role=models.UserRole.admin),
-        models.User(name="Dr Martin", role=models.UserRole.doctor),
-        models.User(name="Infirmier Alice", role=models.UserRole.nurse),
-        models.User(name="Patient Jean", role=models.UserRole.patient),
-    ]
-
-    db.add_all(users)
-    db.commit()
-
-    for item in users:
-        db.refresh(item)
-
-    olga_schema = {
-        "title": "Formulaire OLGA",
-        "fields": [
-            {"name": "patient_reference", "label": "Référence patient", "type": "text", "required": True},
-            {"name": "prelevement_date", "label": "Date de prélèvement", "type": "date", "required": True},
-            {
-                "name": "score_antre",
-                "label": "Score Antre",
-                "type": "select",
-                "options": [0, 1, 2, 3],
-                "required": True,
-            },
-            {
-                "name": "score_corps",
-                "label": "Score Corps",
-                "type": "select",
-                "options": [0, 1, 2, 3],
-                "required": True,
-            },
-            {"name": "stade_olga", "label": "Stade OLGA", "type": "computed", "readOnly": True},
-            {"name": "commentaire", "label": "Commentaire", "type": "textarea", "required": False},
-        ],
-        "computedFields": [
-            {
-                "target": "stade_olga",
-                "dependencies": ["score_antre", "score_corps"],
-                "type": "matrix",
-                "matrix": {
-                    "0,0": "0",
-                    "0,1": "I",
-                    "0,2": "II",
-                    "0,3": "II",
-                    "1,0": "I",
-                    "1,1": "I",
-                    "1,2": "II",
-                    "1,3": "III",
-                    "2,0": "II",
-                    "2,1": "II",
-                    "2,2": "III",
-                    "2,3": "IV",
-                    "3,0": "II",
-                    "3,1": "III",
-                    "3,2": "IV",
-                    "3,3": "IV",
-                },
-            }
-        ],
-    }
-
-    form_template = models.FormTemplate(title="Stadification OLGA", schema_json=olga_schema)
-    db.add(form_template)
-    db.commit()
-    db.refresh(form_template)
-
-    workflow_steps = [
-        {"step": 1, "label": "Saisie infirmier", "form_id": form_template.id, "role_required": "nurse"},
-        {"step": 2, "label": "Validation médecin", "form_id": form_template.id, "role_required": "doctor"},
-        {"step": 3, "label": "Retour patient", "form_id": form_template.id, "role_required": "patient"},
-    ]
-
-    workflow = models.WorkflowDefinition(title="Workflow biopsie standard", steps_json=workflow_steps)
-    db.add(workflow)
-    db.commit()
-    db.refresh(workflow)
-
-    patient = next(user for user in users if user.role == models.UserRole.patient)
-
-    cases = [
-        models.MedicalCase(
-            patient_id=patient.id,
-            workflow_id=workflow.id,
-            current_step=1,
-            status=models.CaseStatus.open,
-            data_jsonb={"meta": {"created_by": "seed"}},
-        ),
-        models.MedicalCase(
-            patient_id=patient.id,
-            workflow_id=workflow.id,
-            current_step=2,
-            status=models.CaseStatus.in_progress,
-            data_jsonb={"step_1": {"score_antre": 1, "score_corps": 1, "stade_olga": "I"}},
-        ),
-    ]
-
-    db.add_all(cases)
-    db.commit()
-
-    return {
-        "message": "Seed terminé",
-        "users": len(users),
-        "form_template_id": form_template.id,
-        "workflow_id": workflow.id,
-        "cases": len(cases),
-        "olga_schema_example": olga_schema,
-    }
-
-
-@app.post("/api/login", response_model=UserOut)
-def login(payload: LoginRequest, db: Session = Depends(database.get_db)):
-    normalized_name = payload.name.strip()
-    if not normalized_name:
-        raise HTTPException(status_code=400, detail="Identifiant requis")
-
-    user = (
-        db.query(models.User)
-        .filter(func.lower(models.User.name) == normalized_name.lower())
-        .first()
-    )
-
-    if not user:
-        role_aliases = {
-            "admin": models.UserRole.admin,
-            "doctor": models.UserRole.doctor,
-            "docteur": models.UserRole.doctor,
-            "nurse": models.UserRole.nurse,
-            "infirmier": models.UserRole.nurse,
-            "infirmiere": models.UserRole.nurse,
-            "patient": models.UserRole.patient,
-        }
-        mapped_role = role_aliases.get(normalized_name.lower())
-        if mapped_role:
-            user = db.query(models.User).filter(models.User.role == mapped_role).first()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
-    return user
-
-
-@app.get("/api/users", response_model=List[UserOut])
-def get_users(db: Session = Depends(database.get_db)):
-    return db.query(models.User).order_by(models.User.id.asc()).all()
-
-
-@app.post("/api/form-templates", response_model=FormTemplateOut)
-def create_form_template(payload: FormTemplateCreate, db: Session = Depends(database.get_db)):
-    form = models.FormTemplate(title=payload.title, schema_json=payload.schema_json)
-    db.add(form)
-    db.commit()
-    db.refresh(form)
-    return form
-
-
-@app.get("/api/form-templates", response_model=List[FormTemplateOut])
-def get_form_templates(db: Session = Depends(database.get_db)):
-    return db.query(models.FormTemplate).order_by(models.FormTemplate.id.asc()).all()
-
-
-@app.get("/api/form-templates/{form_id}", response_model=FormTemplateOut)
-def get_form_template(form_id: int, db: Session = Depends(database.get_db)):
-    form = db.query(models.FormTemplate).filter(models.FormTemplate.id == form_id).first()
-    if not form:
-        raise HTTPException(status_code=404, detail="Formulaire introuvable")
-    return form
-
-
-@app.post("/api/workflows", response_model=WorkflowOut)
-def create_workflow(payload: WorkflowCreate, db: Session = Depends(database.get_db)):
-    workflow = models.WorkflowDefinition(title=payload.title, steps_json=payload.steps_json)
-    db.add(workflow)
-    db.commit()
-    db.refresh(workflow)
-    return workflow
-
-
-@app.get("/api/workflows", response_model=List[WorkflowOut])
-def get_workflows(db: Session = Depends(database.get_db)):
-    return db.query(models.WorkflowDefinition).order_by(models.WorkflowDefinition.id.asc()).all()
-
-
-@app.get("/api/workflows/{workflow_id}", response_model=WorkflowOut)
-def get_workflow(workflow_id: int, db: Session = Depends(database.get_db)):
-    workflow = db.query(models.WorkflowDefinition).filter(models.WorkflowDefinition.id == workflow_id).first()
-    if not workflow:
-        raise HTTPException(status_code=404, detail="Workflow introuvable")
-    return workflow
-
-
-@app.post("/api/cases")
-def create_case(payload: MedicalCaseCreate, db: Session = Depends(database.get_db)):
-    patient = db.query(models.User).filter(models.User.id == payload.patient_id).first()
-    if not patient:
-        raise HTTPException(status_code=404, detail="Patient introuvable")
-
-    workflow = db.query(models.WorkflowDefinition).filter(models.WorkflowDefinition.id == payload.workflow_id).first()
-    if not workflow:
-        raise HTTPException(status_code=404, detail="Workflow introuvable")
-
-    medical_case = models.MedicalCase(
-        patient_id=payload.patient_id,
-        workflow_id=payload.workflow_id,
-        current_step=payload.current_step,
-        status=payload.status,
-        data_jsonb=payload.data_jsonb,
-    )
-
-    db.add(medical_case)
-    db.commit()
-    db.refresh(medical_case)
-
-    full_case = (
-        db.query(models.MedicalCase)
-        .options(selectinload(models.MedicalCase.patient), selectinload(models.MedicalCase.workflow))
-        .filter(models.MedicalCase.id == medical_case.id)
-        .first()
-    )
-
-    if not full_case:
-        raise HTTPException(status_code=404, detail="Case introuvable")
-
-    return serialize_case(full_case)
-
-
-@app.get("/api/cases")
-def get_cases(
-    role: Optional[str] = Query(default=None),
-    db: Session = Depends(database.get_db),
-):
-    items = (
-        db.query(models.MedicalCase)
-        .options(selectinload(models.MedicalCase.patient), selectinload(models.MedicalCase.workflow))
-        .order_by(models.MedicalCase.id.asc())
-        .all()
-    )
-
-    serialized: List[Dict[str, Any]] = []
-    for item in items:
-        payload = serialize_case(item)
-        if role:
-            current_meta = payload.get("current_step_meta") or {}
-            if str(current_meta.get("role_required", "")).lower() != role.lower():
-                continue
-        serialized.append(payload)
-
-    return serialized
-
-
-@app.get("/api/cases/{case_id}")
-def get_case(case_id: int, db: Session = Depends(database.get_db)):
-    item = (
-        db.query(models.MedicalCase)
-        .options(selectinload(models.MedicalCase.patient), selectinload(models.MedicalCase.workflow))
-        .filter(models.MedicalCase.id == case_id)
-        .first()
-    )
-    if not item:
-        raise HTTPException(status_code=404, detail="Case introuvable")
-
-    return serialize_case(item)
-
-
-@app.post("/api/cases/{case_id}/submit-step")
-def submit_step(case_id: int, payload: SubmitStepPayload, db: Session = Depends(database.get_db)):
-    item = (
-        db.query(models.MedicalCase)
-        .options(selectinload(models.MedicalCase.workflow), selectinload(models.MedicalCase.patient))
-        .filter(models.MedicalCase.id == case_id)
-        .first()
-    )
-    if not item:
-        raise HTTPException(status_code=404, detail="Case introuvable")
-
-    steps = item.workflow.steps_json or []
-    if not steps:
-        raise HTTPException(status_code=400, detail="Workflow sans étapes")
-
-    if item.status in {models.CaseStatus.completed, models.CaseStatus.cancelled}:
-        raise HTTPException(status_code=400, detail="Case déjà fermé")
-
-    current_step_key = f"step_{item.current_step}"
-    merged_data = dict(item.data_jsonb or {})
-    previous_step_data = merged_data.get(current_step_key, {})
-    merged_data[current_step_key] = {
-        **(previous_step_data if isinstance(previous_step_data, dict) else {}),
-        **payload.step_data,
-        "submitted_at": datetime.utcnow().isoformat(),
-    }
-
-    has_next_step = item.current_step < len(steps)
-    item.data_jsonb = merged_data
-
-    if has_next_step:
-        item.current_step += 1
-        item.status = models.CaseStatus.in_progress
-    else:
-        item.status = models.CaseStatus.completed
-
-    db.commit()
-    db.refresh(item)
-
-    refreshed = (
-        db.query(models.MedicalCase)
-        .options(selectinload(models.MedicalCase.workflow), selectinload(models.MedicalCase.patient))
-        .filter(models.MedicalCase.id == case_id)
-        .first()
-    )
-
-    if not refreshed:
-        raise HTTPException(status_code=404, detail="Case introuvable après mise à jour")
-
-    return serialize_case(refreshed)
-
+@app.get("/patients", response_model=List[PatientSchema])
+def get_patients(db: Session = Depends(database.get_db)):
+    return db.query(models.Patient).all()
 
 @app.post("/extract-roi")
-def extract_roi(payload: AnalysisPayload, db: Session = Depends(database.get_db)):
-    form_json = {
-        "prelevement_type": payload.prelevement_type,
-        "prelevement_date": payload.prelevement_date,
-        "block_number": payload.block_number,
-        "fixation": payload.fixation,
-        "slide_count": payload.slide_count,
-        "staining": payload.staining,
-        "macro_obs": payload.macro_obs,
-        "micro_obs": payload.micro_obs,
-        "histo_type": payload.histo_type,
-        "sbr_grade": payload.sbr_grade,
-        "margins": payload.margins,
-        "hormonal_receptors": payload.hormonal_receptors,
-        "diagnosis": payload.diagnosis,
-        "comments": payload.comments,
-        "status": payload.status,
-        "pathologist": payload.pathologist,
-        "validation_date": payload.validation_date,
-    }
+def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
+    patient = db.query(models.Patient).filter(models.Patient.folder_id == data.patient_folder).first()
+    if not patient:
+        patient = models.Patient(name=data.patient_name, age=0, folder_id=data.patient_folder)
+        db.add(patient)
+        db.commit()
+        db.refresh(patient)
 
-    drawings_payload = [drawing.model_dump() for drawing in payload.drawings]
-
-    record = models.ExtractionRecord(
-        patient_folder=payload.patient_folder,
-        patient_name=payload.patient_name,
-        filename=payload.filename,
-        annotation_label=payload.annotation_label,
-        owner=payload.owner,
-        x=payload.x,
-        y=payload.y,
-        w=payload.width,
-        h=payload.height,
-        form_json=form_json,
-        drawings_json=drawings_payload,
-    )
-    db.add(record)
+    if data.birth_date: patient.birth_date = data.birth_date
+    if data.family_history: patient.family_history = data.family_history
+    if data.medical_history: patient.medical_history = data.medical_history
     db.commit()
-    db.refresh(record)
 
-    return {"message": "Extraction enregistrée", "id": record.id, "extraction_id": record.id}
+    safe_folder = "".join(c for c in data.patient_folder if c.isalnum() or c in (' ', '-', '_')).strip()
+    patient_dir = os.path.join(DZI_FOLDER, safe_folder, "extractions")
+    os.makedirs(patient_dir, exist_ok=True)
+    filename_str = f"extraction_{int(time.time())}.svs"
+    output_path = os.path.join(patient_dir, filename_str)
+    source_path = "/app/CMU-1.svs"
 
+    if os.path.exists(source_path):
+        try:
+            image = pyvips.Image.new_from_file(source_path, access="sequential")
+            safe_x = max(0, min(data.x, image.width))
+            safe_y = max(0, min(data.y, image.height))
+            region = image.extract_area(safe_x, safe_y, data.width, data.height)
+            region.tiffsave(output_path, compression="jpeg", Q=90, tile=True, pyramid=True, bigtiff=True)
+        except Exception as e:
+            print(f"⚠️ Erreur extraction: {e}")
+
+    sc = data.slide_count if isinstance(data.slide_count, int) else None
+
+    new_ext = models.Extraction(
+        patient_id=patient.id,
+        label=data.annotation_label,
+        dzi_url=f"{safe_folder}/extractions/{filename_str}",
+        x=data.x, y=data.y, w=data.width, h=data.height,
+        owner=data.owner,
+        prelevement_type=data.prelevement_type,
+        prelevement_date=data.prelevement_date,
+        block_number=data.block_number,
+        fixation=data.fixation,
+        slide_count=sc,
+        staining=data.staining,
+        macro_obs=data.macro_obs,
+        micro_obs=data.micro_obs,
+        histo_type=data.histo_type,
+        sbr_grade=data.sbr_grade,
+        margins=data.margins,
+        hormonal_receptors=data.hormonal_receptors,
+        diagnosis=data.diagnosis,
+        comments=data.comments,
+        status=data.status,
+        pathologist=data.pathologist,
+        validation_date=data.validation_date
+    )
+    db.add(new_ext)
+    db.commit()
+    db.refresh(new_ext) 
+    
+    return {"message": "Dossier créé avec succès", "id": new_ext.id, "extraction_id": new_ext.id}
 
 @app.post("/annotations/save")
-def update_annotation(payload: AnalysisPayload, db: Session = Depends(database.get_db)):
-    if not payload.extraction_id:
+def update_analysis(data: AnalysisPayload, db: Session = Depends(database.get_db)):
+    if not data.extraction_id:
         raise HTTPException(status_code=400, detail="ID extraction manquant")
+        
+    ext = db.query(models.Extraction).filter(models.Extraction.id == data.extraction_id).first()
+    if not ext:
+        raise HTTPException(status_code=404, detail="Dossier introuvable")
 
-    record = db.query(models.ExtractionRecord).filter(models.ExtractionRecord.id == payload.extraction_id).first()
-    if not record:
-        raise HTTPException(status_code=404, detail="Extraction introuvable")
+    sc = data.slide_count if isinstance(data.slide_count, int) else None
 
-    record.annotation_label = payload.annotation_label
-    record.owner = payload.owner
-    record.x = payload.x
-    record.y = payload.y
-    record.w = payload.width
-    record.h = payload.height
-    record.form_json = {
-        "prelevement_type": payload.prelevement_type,
-        "prelevement_date": payload.prelevement_date,
-        "block_number": payload.block_number,
-        "fixation": payload.fixation,
-        "slide_count": payload.slide_count,
-        "staining": payload.staining,
-        "macro_obs": payload.macro_obs,
-        "micro_obs": payload.micro_obs,
-        "histo_type": payload.histo_type,
-        "sbr_grade": payload.sbr_grade,
-        "margins": payload.margins,
-        "hormonal_receptors": payload.hormonal_receptors,
-        "diagnosis": payload.diagnosis,
-        "comments": payload.comments,
-        "status": payload.status,
-        "pathologist": payload.pathologist,
-        "validation_date": payload.validation_date,
-    }
-    record.drawings_json = [drawing.model_dump() for drawing in payload.drawings]
+    ext.prelevement_type = data.prelevement_type
+    ext.prelevement_date = data.prelevement_date
+    ext.block_number = data.block_number
+    ext.fixation = data.fixation
+    ext.slide_count = sc
+    ext.staining = data.staining
+    ext.macro_obs = data.macro_obs
+    ext.micro_obs = data.micro_obs
+    ext.histo_type = data.histo_type
+    ext.sbr_grade = data.sbr_grade
+    ext.margins = data.margins
+    ext.hormonal_receptors = data.hormonal_receptors
+    ext.diagnosis = data.diagnosis
+    ext.comments = data.comments
+    ext.status = data.status
+    ext.pathologist = data.pathologist
+    ext.validation_date = data.validation_date
+    
+    db.query(models.Drawing).filter(models.Drawing.extraction_id == ext.id).delete()
+    
+    for d in data.drawings:
+        new_draw = models.Drawing(
+            extraction_id=ext.id,
+            type=d.type,
+            x=d.x, y=d.y, w=d.w, h=d.h,
+            radius=d.radius,
+            text=d.text,
+            points=d.points,
+            author=d.author
+        )
+        db.add(new_draw)
 
     db.commit()
-    db.refresh(record)
-    return {"message": "Dossier et annotations mis à jour", "id": record.id}
-
-
-@app.get("/extractions/{extraction_id}/details")
-def get_extraction_details(extraction_id: int, db: Session = Depends(database.get_db)):
-    record = db.query(models.ExtractionRecord).filter(models.ExtractionRecord.id == extraction_id).first()
-    if not record:
-        raise HTTPException(status_code=404, detail="Extraction introuvable")
-    return serialize_extraction_detail(record)
-
+    return {"message": "Dossier et annotations mis à jour"}
 
 @app.get("/patients/{folder_id}/extractions")
-def get_patient_extractions(folder_id: str, db: Session = Depends(database.get_db)):
-    records = (
-        db.query(models.ExtractionRecord)
-        .filter(models.ExtractionRecord.patient_folder == folder_id)
-        .order_by(models.ExtractionRecord.created_at.desc())
-        .all()
-    )
-    return [
-        {
-            "id": record.id,
-            "filename": record.annotation_label or record.filename,
-            "url": f"http://localhost:8000/dzi_data/{record.filename}",
-            "roi": {"x": record.x, "y": record.y, "w": record.w, "h": record.h},
-            "owner": record.owner,
-            "status": (record.form_json or {}).get("status", "en_analyse"),
-        }
-        for record in records
-    ]
+def get_extractions(folder_id: str, db: Session = Depends(database.get_db)):
+    patient = db.query(models.Patient).filter(models.Patient.folder_id == folder_id).first()
+    if not patient: return []
+    results = []
+    for e in patient.extractions:
+        results.append({
+            "id": e.id,
+            "filename": e.label,
+            "url": f"http://localhost:8000/dzi_data/{e.dzi_url}",
+            "roi": { "x": e.x, "y": e.y, "w": e.w, "h": e.h },
+            "diagnosis": e.diagnosis,
+            "status": e.status,
+            "owner": e.owner
+        })
+    return results
 
+@app.get("/extractions/{extraction_id}/details")
+def get_details(extraction_id: int, db: Session = Depends(database.get_db)):
+    ext = db.query(models.Extraction).filter(models.Extraction.id == extraction_id).first()
+    if not ext: raise HTTPException(status_code=404, detail="Non trouvé")
+    
+    return {
+        "id": ext.id,
+        "filename": ext.label,
+        "prelevement_type": ext.prelevement_type,
+        "prelevement_date": ext.prelevement_date,
+        "block_number": ext.block_number,
+        "fixation": ext.fixation,
+        "slide_count": ext.slide_count,
+        "staining": ext.staining,
+        "macro_obs": ext.macro_obs,
+        "micro_obs": ext.micro_obs,
+        "histo_type": ext.histo_type,
+        "sbr_grade": ext.sbr_grade,
+        "margins": ext.margins,
+        "hormonal_receptors": ext.hormonal_receptors,
+        "diagnosis": ext.diagnosis,
+        "comments": ext.comments,
+        "status": ext.status,
+        "pathologist": ext.pathologist,
+        "validation_date": ext.validation_date,
+        "drawings": [
+            {
+                "type": d.type, "x": d.x, "y": d.y, 
+                "w": d.w, "h": d.h, "radius": d.radius, 
+                "text": d.text, "points": d.points,
+                "author": d.author
+            } for d in ext.drawings
+        ]
+    }
 
 @app.delete("/extractions/{extraction_id}")
 def delete_extraction(extraction_id: int, username: str, db: Session = Depends(database.get_db)):
-    record = db.query(models.ExtractionRecord).filter(models.ExtractionRecord.id == extraction_id).first()
-    if not record:
+    ext = db.query(models.Extraction).filter(models.Extraction.id == extraction_id).first()
+    
+    if not ext:
         raise HTTPException(status_code=404, detail="Introuvable")
-
-    if record.owner and record.owner != username:
+    
+    if ext.owner != username:
         raise HTTPException(status_code=403, detail="Vous ne pouvez supprimer que vos propres extractions")
+        
+    try:
+        file_path = os.path.join(DZI_FOLDER, ext.dzi_url)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            files_dir = file_path.replace(".svs", "_files").replace(".dzi", "_files")
+            if os.path.exists(files_dir):
+                shutil.rmtree(files_dir)
+    except Exception as e:
+        print(f"Erreur suppression fichiers: {e}")
 
-    db.delete(record)
+    db.delete(ext)
     db.commit()
+    
     return {"message": "Extraction supprimée"}
