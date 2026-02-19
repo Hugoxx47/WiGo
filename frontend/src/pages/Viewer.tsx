@@ -36,8 +36,20 @@ interface Shape {
 export default function Viewer() {
   const navigate = useNavigate();
   const location = useLocation();
-  
-  const currentUser = localStorage.getItem("biopsie_user") || "Inconnu";
+
+    const currentUser = (() => {
+        const rawUser = localStorage.getItem("biopsie_user");
+        if (!rawUser) return "Inconnu";
+
+        try {
+            const parsedUser = JSON.parse(rawUser) as { name?: string };
+            if (parsedUser?.name) return parsedUser.name;
+        } catch {
+            return rawUser;
+        }
+
+        return rawUser;
+    })();
 
   const searchParams = new URLSearchParams(location.search);
   const rawUrl = searchParams.get('url'); 
@@ -133,7 +145,7 @@ export default function Viewer() {
                 if (isAnnotationMode) {
                     setTimeout(() => {
                         const homeZoom = viewer.viewport.getZoom();
-                        viewer.viewport.minZoomLevel = homeZoom;
+                        void homeZoom;
                         viewer.addHandler('animation', () => {
                             const bounds = roiRect;
                             const current = viewer.viewport.getBounds();
@@ -265,8 +277,10 @@ export default function Viewer() {
       if (movingShapeIndex !== null) { setMovingShapeIndex(null); setDragStart(null); return; }
       if (currentTool === 'polygon') return;
       if (!currentDragShape || !viewerRef.current) { setDragStart(null); setCurrentDragShape(null); return; }
+    const dragWidth = currentDragShape.w ?? 0;
+    const dragHeight = currentDragShape.h ?? 0;
       const p1 = viewerRef.current.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(currentDragShape.x, currentDragShape.y));
-      const p2 = viewerRef.current.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(currentDragShape.x + currentDragShape.w, currentDragShape.y + currentDragShape.h));
+    const p2 = viewerRef.current.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(currentDragShape.x + dragWidth, currentDragShape.y + dragHeight));
       const imageX = p1.x; const imageY = p1.y;
       const imageW = p2.x - p1.x; const imageH = p2.y - p1.y;
       const pRadius = viewerRef.current.viewport.deltaPointsFromPixels(new OpenSeadragon.Point(currentDragShape.radius || 0, 0));
@@ -278,7 +292,7 @@ export default function Viewer() {
           author: currentUser 
       };
 
-      if (newShape.w > 5 || (newShape.radius && newShape.radius > 5)) {
+      if ((newShape.w ?? 0) > 5 || (newShape.radius && newShape.radius > 5)) {
           setShapes(prev => [...prev, newShape]); 
           if (!isAnnotationMode) { setCurrentTool('move'); setShowSidebar(true); }
       }
@@ -326,8 +340,10 @@ export default function Viewer() {
   const renderShapes = () => {
       if (!viewerRef.current) return null;
       return shapes.map((shape, idx) => {
+          const shapeWidth = shape.w ?? 0;
+          const shapeHeight = shape.h ?? 0;
           const p1 = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x, shape.y));
-          const p2 = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x + shape.w, shape.y + shape.h));
+          const p2 = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x + shapeWidth, shape.y + shapeHeight));
           const sx = p1.x; const sy = p1.y; const sw = p2.x - p1.x; const sh = p2.y - p1.y;
           
           const isMe = shape.author === currentUser;
