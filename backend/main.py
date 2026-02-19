@@ -103,6 +103,51 @@ class MedicalCaseOut(BaseModel):
     current_step_meta: Optional[Dict[str, Any]] = None
 
 
+class DrawingSchema(BaseModel):
+    type: str
+    x: float
+    y: float
+    w: Optional[float] = 0
+    h: Optional[float] = 0
+    radius: Optional[float] = 0
+    text: Optional[str] = ""
+    points: Optional[List[Dict[str, float]]] = []
+    author: Optional[str] = "Inconnu"
+
+
+class AnalysisPayload(BaseModel):
+    filename: str
+    x: int
+    y: int
+    width: int
+    height: int
+    patient_folder: str
+    patient_name: str
+    annotation_label: str
+    extraction_id: Optional[int] = None
+    owner: Optional[str] = "Inconnu"
+
+    prelevement_type: Optional[str] = ""
+    prelevement_date: Optional[str] = ""
+    block_number: Optional[str] = ""
+    fixation: Optional[str] = ""
+    slide_count: Optional[int] = None
+    staining: Optional[List[str]] = []
+    macro_obs: Optional[str] = ""
+    micro_obs: Optional[str] = ""
+    histo_type: Optional[str] = ""
+    sbr_grade: Optional[str] = ""
+    margins: Optional[str] = ""
+    hormonal_receptors: Optional[str] = ""
+    diagnosis: Optional[str] = ""
+    comments: Optional[str] = ""
+    status: Optional[str] = ""
+    pathologist: Optional[str] = ""
+    validation_date: Optional[str] = ""
+
+    drawings: List[DrawingSchema] = []
+
+
 def get_current_step_meta(workflow: models.WorkflowDefinition, current_step: int) -> Optional[Dict[str, Any]]:
     steps = workflow.steps_json or []
     for step in steps:
@@ -134,6 +179,32 @@ def serialize_case(item: models.MedicalCase) -> Dict[str, Any]:
             "steps_json": item.workflow.steps_json,
         },
         "current_step_meta": step_meta,
+    }
+
+
+def serialize_extraction_detail(record: models.ExtractionRecord) -> Dict[str, Any]:
+    form_json = record.form_json or {}
+    return {
+        "id": record.id,
+        "filename": record.annotation_label or record.filename,
+        "prelevement_type": form_json.get("prelevement_type", ""),
+        "prelevement_date": form_json.get("prelevement_date", ""),
+        "block_number": form_json.get("block_number", ""),
+        "fixation": form_json.get("fixation", ""),
+        "slide_count": form_json.get("slide_count"),
+        "staining": form_json.get("staining", []),
+        "macro_obs": form_json.get("macro_obs", ""),
+        "micro_obs": form_json.get("micro_obs", ""),
+        "histo_type": form_json.get("histo_type", ""),
+        "sbr_grade": form_json.get("sbr_grade", ""),
+        "margins": form_json.get("margins", ""),
+        "hormonal_receptors": form_json.get("hormonal_receptors", ""),
+        "diagnosis": form_json.get("diagnosis", ""),
+        "comments": form_json.get("comments", ""),
+        "status": form_json.get("status", ""),
+        "pathologist": form_json.get("pathologist", ""),
+        "validation_date": form_json.get("validation_date", ""),
+        "drawings": record.drawings_json or [],
     }
 
 
@@ -455,3 +526,131 @@ def submit_step(case_id: int, payload: SubmitStepPayload, db: Session = Depends(
         raise HTTPException(status_code=404, detail="Case introuvable après mise à jour")
 
     return serialize_case(refreshed)
+
+
+@app.post("/extract-roi")
+def extract_roi(payload: AnalysisPayload, db: Session = Depends(database.get_db)):
+    form_json = {
+        "prelevement_type": payload.prelevement_type,
+        "prelevement_date": payload.prelevement_date,
+        "block_number": payload.block_number,
+        "fixation": payload.fixation,
+        "slide_count": payload.slide_count,
+        "staining": payload.staining,
+        "macro_obs": payload.macro_obs,
+        "micro_obs": payload.micro_obs,
+        "histo_type": payload.histo_type,
+        "sbr_grade": payload.sbr_grade,
+        "margins": payload.margins,
+        "hormonal_receptors": payload.hormonal_receptors,
+        "diagnosis": payload.diagnosis,
+        "comments": payload.comments,
+        "status": payload.status,
+        "pathologist": payload.pathologist,
+        "validation_date": payload.validation_date,
+    }
+
+    drawings_payload = [drawing.model_dump() for drawing in payload.drawings]
+
+    record = models.ExtractionRecord(
+        patient_folder=payload.patient_folder,
+        patient_name=payload.patient_name,
+        filename=payload.filename,
+        annotation_label=payload.annotation_label,
+        owner=payload.owner,
+        x=payload.x,
+        y=payload.y,
+        w=payload.width,
+        h=payload.height,
+        form_json=form_json,
+        drawings_json=drawings_payload,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+
+    return {"message": "Extraction enregistrée", "id": record.id, "extraction_id": record.id}
+
+
+@app.post("/annotations/save")
+def update_annotation(payload: AnalysisPayload, db: Session = Depends(database.get_db)):
+    if not payload.extraction_id:
+        raise HTTPException(status_code=400, detail="ID extraction manquant")
+
+    record = db.query(models.ExtractionRecord).filter(models.ExtractionRecord.id == payload.extraction_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Extraction introuvable")
+
+    record.annotation_label = payload.annotation_label
+    record.owner = payload.owner
+    record.x = payload.x
+    record.y = payload.y
+    record.w = payload.width
+    record.h = payload.height
+    record.form_json = {
+        "prelevement_type": payload.prelevement_type,
+        "prelevement_date": payload.prelevement_date,
+        "block_number": payload.block_number,
+        "fixation": payload.fixation,
+        "slide_count": payload.slide_count,
+        "staining": payload.staining,
+        "macro_obs": payload.macro_obs,
+        "micro_obs": payload.micro_obs,
+        "histo_type": payload.histo_type,
+        "sbr_grade": payload.sbr_grade,
+        "margins": payload.margins,
+        "hormonal_receptors": payload.hormonal_receptors,
+        "diagnosis": payload.diagnosis,
+        "comments": payload.comments,
+        "status": payload.status,
+        "pathologist": payload.pathologist,
+        "validation_date": payload.validation_date,
+    }
+    record.drawings_json = [drawing.model_dump() for drawing in payload.drawings]
+
+    db.commit()
+    db.refresh(record)
+    return {"message": "Dossier et annotations mis à jour", "id": record.id}
+
+
+@app.get("/extractions/{extraction_id}/details")
+def get_extraction_details(extraction_id: int, db: Session = Depends(database.get_db)):
+    record = db.query(models.ExtractionRecord).filter(models.ExtractionRecord.id == extraction_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Extraction introuvable")
+    return serialize_extraction_detail(record)
+
+
+@app.get("/patients/{folder_id}/extractions")
+def get_patient_extractions(folder_id: str, db: Session = Depends(database.get_db)):
+    records = (
+        db.query(models.ExtractionRecord)
+        .filter(models.ExtractionRecord.patient_folder == folder_id)
+        .order_by(models.ExtractionRecord.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": record.id,
+            "filename": record.annotation_label or record.filename,
+            "url": f"http://localhost:8000/dzi_data/{record.filename}",
+            "roi": {"x": record.x, "y": record.y, "w": record.w, "h": record.h},
+            "owner": record.owner,
+            "status": (record.form_json or {}).get("status", "en_analyse"),
+        }
+        for record in records
+    ]
+
+
+@app.delete("/extractions/{extraction_id}")
+def delete_extraction(extraction_id: int, username: str, db: Session = Depends(database.get_db)):
+    record = db.query(models.ExtractionRecord).filter(models.ExtractionRecord.id == extraction_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Introuvable")
+
+    if record.owner and record.owner != username:
+        raise HTTPException(status_code=403, detail="Vous ne pouvez supprimer que vos propres extractions")
+
+    db.delete(record)
+    db.commit()
+    return {"message": "Extraction supprimée"}

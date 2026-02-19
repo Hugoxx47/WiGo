@@ -67,3 +67,22 @@ class MedicalCase(Base):
 
     patient = relationship("User", back_populates="medical_cases")
     workflow = relationship("WorkflowDefinition", back_populates="medical_cases")
+
+
+class ExtractionRecord(Base):
+    __tablename__ = "extraction_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patient_folder = Column(String, nullable=False, index=True)
+    patient_name = Column(String, nullable=False)
+    filename = Column(String, nullable=False)
+    annotation_label = Column(String, nullable=True)
+    owner = Column(String, nullable=True)
+    x = Column(Integer, nullable=False, default=0)
+    y = Column(Integer, nullable=False, default=0)
+    w = Column(Integer, nullable=False, default=0)
+    h = Column(Integer, nullable=False, default=0)
+    form_json = Column(JSONB, nullable=False, default=dict)
+    drawings_json = Column(JSONB, nullable=False, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

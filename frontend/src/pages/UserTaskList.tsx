@@ -187,13 +187,30 @@ export default function UserTaskList() {
                 Étape courante: <span className="text-cyan-300">{item.current_step_meta?.label || `Step ${item.current_step}`}</span>
               </div>
 
-              <button
-                type="button"
-                onClick={() => void openCurrentStepForm(item)}
-                className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-sm font-semibold"
-              >
-                Ouvrir le formulaire
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => void openCurrentStepForm(item)}
+                  className="flex-1 px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-sm font-semibold"
+                >
+                  Ouvrir le formulaire
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigate(`/viewer?url=biopsie_cmu_1.dzi`, {
+                      state: {
+                        patientName: item.patient.name,
+                        folderId: `CASE-${item.id}`
+                      }
+                    });
+                  }}
+                  className="px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 text-sm font-semibold"
+                  title="Voir l'image"
+                >
+                  👁️
+                </button>
+              </div>
             </article>
           ))}
         </div>
@@ -208,16 +225,32 @@ export default function UserTaskList() {
           <section className="rounded-xl border border-slate-700 bg-slate-900/70 p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold">Case #{selectedCase.id} · Étape {selectedCase.current_step}</h3>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedCase(null);
-                  setActiveSchema(null);
-                }}
-                className="text-sm px-3 py-1 rounded-lg border border-slate-600 hover:bg-slate-800"
-              >
-                Fermer
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigate(`/viewer?url=biopsie_cmu_1.dzi`, {
+                      state: {
+                        patientName: selectedCase.patient.name,
+                        folderId: `CASE-${selectedCase.id}`
+                      }
+                    });
+                  }}
+                  className="text-sm px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium flex items-center gap-1"
+                >
+                  Ouvrir l'Image
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCase(null);
+                    setActiveSchema(null);
+                  }}
+                  className="text-sm px-3 py-1 rounded-lg border border-slate-600 hover:bg-slate-800"
+                >
+                  Fermer
+                </button>
+              </div>
             </div>
 
             <SmartForm
