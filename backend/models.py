@@ -1,83 +1,88 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text, Float, JSON
-from sqlalchemy.orm import relationship
-from database import Base
 from datetime import datetime
+import enum
 
-class Patient(Base):
-    __tablename__ = "patients"
+from sqlalchemy import Column, DateTime, Enum as SQLEnum, ForeignKey, Integer, String
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import relationship
+
+from database import Base
+
+
+class UserRole(str, enum.Enum):
+    admin = "admin"
+    doctor = "doctor"
+    nurse = "nurse"
+    patient = "patient"
+
+
+class CaseStatus(str, enum.Enum):
+    open = "open"
+    in_progress = "in_progress"
+    completed = "completed"
+    cancelled = "cancelled"
+
+
+class User(Base):
+    __tablename__ = "users"
+
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String)
-    age = Column(Integer)
-    folder_id = Column(String)
-    
-    birth_date = Column(String)
-    family_history = Column(String)
-    medical_history = Column(Text)
+    name = Column(String, nullable=False, unique=True, index=True)
+    role = Column(SQLEnum(UserRole, name="user_role"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    biopsies = relationship("Biopsy", back_populates="patient", cascade="all, delete")
-    extractions = relationship("Extraction", back_populates="patient", cascade="all, delete")
+    medical_cases = relationship("MedicalCase", back_populates="patient")
 
-class Biopsy(Base):
-    __tablename__ = "biopsies"
+
+class FormTemplate(Base):
+    __tablename__ = "form_templates"
+
     id = Column(Integer, primary_key=True, index=True)
-    patient_id = Column(Integer, ForeignKey("patients.id"))
-    image_url = Column(String)
-    status = Column(String)
-    patient = relationship("Patient", back_populates="biopsies")
+    title = Column(String, nullable=False)
+    schema_json = Column(JSONB, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-class Extraction(Base):
-    __tablename__ = "extractions"
+
+class WorkflowDefinition(Base):
+    __tablename__ = "workflow_definitions"
+
     id = Column(Integer, primary_key=True, index=True)
-    patient_id = Column(Integer, ForeignKey("patients.id"))
-    
-    label = Column(String)
-    dzi_url = Column(String) 
-    x = Column(Integer, default=0)
-    y = Column(Integer, default=0)
-    w = Column(Integer, default=0)
-    h = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    title = Column(String, nullable=False)
+    steps_json = Column(JSONB, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    owner = Column(String, nullable=True) 
+    medical_cases = relationship("MedicalCase", back_populates="workflow")
 
-    # Formulaire Médical
-    prelevement_type = Column(String, nullable=True)
-    prelevement_date = Column(String, nullable=True)
-    block_number = Column(String, nullable=True)
-    fixation = Column(String, nullable=True)
-    slide_count = Column(Integer, nullable=True)
-    staining = Column(JSON, nullable=True) 
 
-    macro_obs = Column(Text, nullable=True)
-    micro_obs = Column(Text, nullable=True)
-    histo_type = Column(String, nullable=True)
-    sbr_grade = Column(String, nullable=True)
-    margins = Column(String, nullable=True)
-    hormonal_receptors = Column(String, nullable=True)
-    diagnosis = Column(String, nullable=True)
-    comments = Column(Text, nullable=True)
+class MedicalCase(Base):
+    __tablename__ = "medical_cases"
 
-    status = Column(String, nullable=True)
-    pathologist = Column(String, nullable=True)
-    validation_date = Column(String, nullable=True)
-
-    patient = relationship("Patient", back_populates="extractions")
-    drawings = relationship("Drawing", back_populates="extraction", cascade="all, delete")
-
-class Drawing(Base):
-    __tablename__ = "drawings"
     id = Column(Integer, primary_key=True, index=True)
-    extraction_id = Column(Integer, ForeignKey("extractions.id"))
-    
-    type = Column(String)  # 'rect', 'circle', 'polygon', 'text'
-    x = Column(Float)
-    y = Column(Float)
-    w = Column(Float, nullable=True)
-    h = Column(Float, nullable=True)
-    radius = Column(Float, nullable=True)
-    text = Column(String, nullable=True)
-    points = Column(JSON, nullable=True) 
+    patient_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    workflow_id = Column(Integer, ForeignKey("workflow_definitions.id"), nullable=False, index=True)
+    current_step = Column(Integer, nullable=False, default=1)
+    status = Column(SQLEnum(CaseStatus, name="case_status"), nullable=False, default=CaseStatus.open)
+    data_jsonb = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    author = Column(String, nullable=True)
-    
-    extraction = relationship("Extraction", back_populates="drawings")
+    patient = relationship("User", back_populates="medical_cases")
+    workflow = relationship("WorkflowDefinition", back_populates="medical_cases")
+
+
+class ExtractionRecord(Base):
+    __tablename__ = "extraction_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patient_folder = Column(String, nullable=False, index=True)
+    patient_name = Column(String, nullable=False)
+    filename = Column(String, nullable=False)
+    annotation_label = Column(String, nullable=True)
+    owner = Column(String, nullable=True)
+    x = Column(Integer, nullable=False, default=0)
+    y = Column(Integer, nullable=False, default=0)
+    w = Column(Integer, nullable=False, default=0)
+    h = Column(Integer, nullable=False, default=0)
+    form_json = Column(JSONB, nullable=False, default=dict)
+    drawings_json = Column(JSONB, nullable=False, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

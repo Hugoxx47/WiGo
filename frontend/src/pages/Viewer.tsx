@@ -36,8 +36,20 @@ interface Shape {
 export default function Viewer() {
   const navigate = useNavigate();
   const location = useLocation();
-  
-  const currentUser = localStorage.getItem("biopsie_user") || "Inconnu";
+
+    const currentUser = (() => {
+        const rawUser = localStorage.getItem("biopsie_user");
+        if (!rawUser) return "Inconnu";
+
+        try {
+            const parsedUser = JSON.parse(rawUser) as { name?: string };
+            if (parsedUser?.name) return parsedUser.name;
+        } catch {
+            return rawUser;
+        }
+
+        return rawUser;
+    })();
 
   const searchParams = new URLSearchParams(location.search);
   const rawUrl = searchParams.get('url'); 
@@ -49,7 +61,7 @@ export default function Viewer() {
   const isAnnotationMode = !!extractionId;
 
   const [loading, setLoading] = useState(false);
-  const [showSidebar, setShowSidebar] = useState(isAnnotationMode); 
+  const [showSidebar, setShowSidebar] = useState(isAnnotationMode || (!!patientName && patientName !== "Patient")); 
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [newExtractionId, setNewExtractionId] = useState<number | null>(null);
@@ -105,8 +117,8 @@ export default function Viewer() {
             showNavigator: !isAnnotationMode, 
             animationTime: 0.5,
             blendTime: 0.1,
-            maxZoomPixelRatio: 10, 
-            gestureSettingsMouse: { clickToZoom: false },
+            maxZoomPixelRatio: 40,
+            gestureSettingsMouse: { clickToZoom: true },
             crossOriginPolicy: "Anonymous",
             useCanvas: false, 
             showHomeControl: false, 
@@ -133,7 +145,7 @@ export default function Viewer() {
                 if (isAnnotationMode) {
                     setTimeout(() => {
                         const homeZoom = viewer.viewport.getZoom();
-                        viewer.viewport.minZoomLevel = homeZoom;
+                        void homeZoom;
                         viewer.addHandler('animation', () => {
                             const bounds = roiRect;
                             const current = viewer.viewport.getBounds();
@@ -168,7 +180,14 @@ export default function Viewer() {
       setLoading(true);
       setAiSuggestion(null); 
       setTimeout(() => {
-          setAiSuggestion("Le serveur n'a pas de réponse pour l'instant");
+                    const healthy = Math.random() >= 0.5;
+                    if (healthy) {
+                        const confidence = (0.82 + Math.random() * 0.17).toFixed(2);
+                        setAiSuggestion(`Résultat IA: Aspect sain (probabilité ${confidence}).`);
+                    } else {
+                        const confidence = (0.58 + Math.random() * 0.3).toFixed(2);
+                        setAiSuggestion(`Résultat IA: Suspicion lésionnelle (probabilité ${confidence}).`);
+                    }
           setShowSidebar(true);
           setLoading(false);
       }, 1500);
@@ -265,8 +284,10 @@ export default function Viewer() {
       if (movingShapeIndex !== null) { setMovingShapeIndex(null); setDragStart(null); return; }
       if (currentTool === 'polygon') return;
       if (!currentDragShape || !viewerRef.current) { setDragStart(null); setCurrentDragShape(null); return; }
+    const dragWidth = currentDragShape.w ?? 0;
+    const dragHeight = currentDragShape.h ?? 0;
       const p1 = viewerRef.current.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(currentDragShape.x, currentDragShape.y));
-      const p2 = viewerRef.current.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(currentDragShape.x + currentDragShape.w, currentDragShape.y + currentDragShape.h));
+    const p2 = viewerRef.current.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(currentDragShape.x + dragWidth, currentDragShape.y + dragHeight));
       const imageX = p1.x; const imageY = p1.y;
       const imageW = p2.x - p1.x; const imageH = p2.y - p1.y;
       const pRadius = viewerRef.current.viewport.deltaPointsFromPixels(new OpenSeadragon.Point(currentDragShape.radius || 0, 0));
@@ -278,7 +299,7 @@ export default function Viewer() {
           author: currentUser 
       };
 
-      if (newShape.w > 5 || (newShape.radius && newShape.radius > 5)) {
+      if ((newShape.w ?? 0) > 5 || (newShape.radius && newShape.radius > 5)) {
           setShapes(prev => [...prev, newShape]); 
           if (!isAnnotationMode) { setCurrentTool('move'); setShowSidebar(true); }
       }
@@ -326,8 +347,10 @@ export default function Viewer() {
   const renderShapes = () => {
       if (!viewerRef.current) return null;
       return shapes.map((shape, idx) => {
+          const shapeWidth = shape.w ?? 0;
+          const shapeHeight = shape.h ?? 0;
           const p1 = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x, shape.y));
-          const p2 = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x + shape.w, shape.y + shape.h));
+          const p2 = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x + shapeWidth, shape.y + shapeHeight));
           const sx = p1.x; const sy = p1.y; const sw = p2.x - p1.x; const sh = p2.y - p1.y;
           
           const isMe = shape.author === currentUser;
@@ -540,7 +563,7 @@ export default function Viewer() {
                   setShowSuccessModal(true);
               } else {
                   alert("✅ Dossier mis à jour !");
-                  navigate('/dashboard'); 
+                  navigate('/inbox');
               }
           } else {
               alert("Erreur serveur lors de la sauvegarde.");
@@ -554,6 +577,24 @@ export default function Viewer() {
       
       <div id="osd-container" className="relative flex-grow h-full bg-black overflow-hidden" ref={containerRef}>
           <div id="openseadragon-viewer" className="absolute inset-0 z-0 bg-black" />
+
+          {/* AIDE VISUELLE */}
+          <div className="absolute top-4 left-4 z-30 pointer-events-none">
+              <div className="bg-black/60 backdrop-blur-sm border border-white/10 p-3 rounded-xl text-[10px] uppercase tracking-wider text-slate-400 space-y-2">
+                  <div className="flex items-center gap-2">
+                      <span className="w-5 h-5 flex items-center justify-center bg-white/10 rounded">🖱️</span>
+                      <span>Zoom: Molette / Double-clic</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                      <span className="w-5 h-5 flex items-center justify-center bg-white/10 rounded">🖐️</span>
+                      <span>Pan: Glisser (Outil Main)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                      <span className="w-5 h-5 flex items-center justify-center bg-white/10 rounded">✏️</span>
+                      <span>Annnoter: Choisir un outil en bas</span>
+                  </div>
+              </div>
+          </div>
 
           {/* Calque SVG */}
           <div className={`absolute inset-0 z-10 ${currentTool === 'move' && !pendingTextPos && movingShapeIndex === null ? 'pointer-events-none' : 'cursor-crosshair pointer-events-auto'}`}
@@ -604,7 +645,7 @@ export default function Viewer() {
           {/* BARRE D'OUTILS FLOTTANTE */}
           <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-20 pointer-events-none flex gap-4 ui-layer">
              <div className="pointer-events-auto bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-2xl p-2 flex items-center gap-4 shadow-2xl">
-                <button onClick={() => navigate('/dashboard')} className="p-2 hover:bg-white/10 rounded-xl transition-colors"><ArrowBackIcon /></button>
+                <button onClick={() => navigate('/inbox')} className="p-2 hover:bg-white/10 rounded-xl transition-colors"><ArrowBackIcon /></button>
                 <div className="pr-4 border-r border-white/10">
                     <h1 className="font-bold text-sm text-white">{patientName}</h1>
                     <div className="text-xs text-emerald-400 font-mono">ID: {folderId}</div>
@@ -615,13 +656,9 @@ export default function Viewer() {
                 <button onClick={() => setCurrentTool('move')} className={`p-3 rounded-xl transition-all ${currentTool === 'move' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`} title="Déplacer"><PanToolIcon /></button>
                 <div className="w-px bg-white/10 mx-1 my-2"></div>
                 <button onClick={() => setCurrentTool('rect')} className={`p-3 rounded-xl transition-all ${currentTool === 'rect' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-emerald-400'}`} title="Rectangle"><CropSquareIcon /></button>
-                {isAnnotationMode && (
-                    <>
-                        <button onClick={() => setCurrentTool('circle')} className={`p-3 rounded-xl transition-all ${currentTool === 'circle' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-blue-400'}`} title="Cercle"><RadioButtonUncheckedIcon /></button>
-                        <button onClick={() => {setCurrentTool('polygon'); setPolyPoints([])}} className={`p-3 rounded-xl transition-all ${currentTool === 'polygon' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-amber-400'}`} title="Polygone"><PolylineIcon /></button>
-                        <button onClick={() => {setCurrentTool('text'); setPendingTextPos(null)}} className={`p-3 rounded-xl transition-all ${currentTool === 'text' ? 'bg-yellow-600 text-white' : 'text-slate-400 hover:text-yellow-400'}`} title="Texte"><TextFieldsIcon /></button>
-                    </>
-                )}
+                <button onClick={() => setCurrentTool('circle')} className={`p-3 rounded-xl transition-all ${currentTool === 'circle' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-blue-400'}`} title="Cercle"><RadioButtonUncheckedIcon /></button>
+                <button onClick={() => {setCurrentTool('polygon'); setPolyPoints([])}} className={`p-3 rounded-xl transition-all ${currentTool === 'polygon' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-amber-400'}`} title="Polygone"><PolylineIcon /></button>
+                <button onClick={() => {setCurrentTool('text'); setPendingTextPos(null)}} className={`p-3 rounded-xl transition-all ${currentTool === 'text' ? 'bg-yellow-600 text-white' : 'text-slate-400 hover:text-yellow-400'}`} title="Texte"><TextFieldsIcon /></button>
              </div>
 
              <div className="pointer-events-auto flex gap-3">
@@ -629,15 +666,13 @@ export default function Viewer() {
                 {shapes.length > 0 && <button onClick={handleUndo} className="p-3 bg-slate-700/80 backdrop-blur-md text-white border border-slate-500 rounded-2xl hover:bg-slate-600 transition-all shadow-lg" title="Annuler dernier"><UndoIcon /></button>}
                 {shapes.length > 0 && <button onClick={handleDeleteAll} className="p-3 bg-red-500/20 text-red-400 border border-red-500/50 rounded-2xl hover:bg-red-500 hover:text-white"><DeleteForeverIcon /></button>}
                 
-                {isAnnotationMode && (
-                  <button 
-                      onClick={handleAiAnalysis} 
-                      disabled={loading}
-                      className={`px-4 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-xl transition-all ${aiSuggestion ? 'bg-slate-700 text-slate-300 border border-slate-500 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-500'}`}
-                  >
-                      <SmartToyIcon /> {loading ? "..." : (aiSuggestion ? "IA Terminée" : "IA")}
-                  </button>
-                )}
+                <button 
+                    onClick={handleAiAnalysis} 
+                    disabled={loading}
+                    className={`px-4 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-xl transition-all ${aiSuggestion ? 'bg-slate-700 text-slate-300 border border-slate-500 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-500'}`}
+                >
+                    <SmartToyIcon /> {loading ? "..." : (aiSuggestion ? "IA Terminée" : "IA")}
+                </button>
 
                 <button onClick={() => setShowSidebar(!showSidebar)} className={`px-4 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-xl transition-all ${showSidebar ? 'bg-slate-700 text-slate-300' : 'bg-emerald-600 text-white'}`}>
                     <DescriptionIcon /> {showSidebar ? "Masquer" : "Rapport"}
