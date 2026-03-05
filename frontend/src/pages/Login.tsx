@@ -6,6 +6,7 @@ export default function Login() {
   const navigate = useNavigate();
   const [username, setUsername] = useState("");
 
+  // Fonction pour se connecter à son identifiant de médecin
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (!username.trim()) return; 
