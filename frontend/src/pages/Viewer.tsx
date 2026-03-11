@@ -18,6 +18,7 @@ import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import DescriptionIcon from '@mui/icons-material/Description';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import VisibilityIcon from '@mui/icons-material/Visibility'; 
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import PersonIcon from '@mui/icons-material/Person';
 
 type ToolType = 'move' | 'rect' | 'circle' | 'polygon' | 'text';
@@ -54,6 +55,8 @@ export default function Viewer() {
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [newExtractionId, setNewExtractionId] = useState<number | null>(null);
   const [, setRedrawToken] = useState(0);
+  
+  const [showTexts, setShowTexts] = useState(true);
 
   // Formulaire
   const [prelevementType, setPrelevementType] = useState("fine");
@@ -210,10 +213,25 @@ export default function Viewer() {
       return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
+  // --- MODIFICATION 1 : GESTION DU CLIC SUR UNE FORME ---
   const handleShapeMouseDown = (e: React.MouseEvent, index: number) => {
+      // Cas 2 : L'utilisateur veut ajouter du texte à cette forme précise !
+      if (currentTool === 'text') {
+          e.stopPropagation(); 
+          e.preventDefault();
+          const { x, y } = getCoords(e);
+          setPendingTextPos({ x, y }); // On ancre le texte là où il a cliqué sur la forme
+          setTextValue(""); 
+          return;
+      }
+
       if (currentTool !== 'move') return; 
-      
       if (shapes[index].author && shapes[index].author !== currentUser) return;
+      
+      // En mode "déplacer", on ne peut déplacer que les textes (les lignes directrices)
+      if (shapes[index].type !== 'text') {
+          return; 
+      }
 
       e.stopPropagation(); 
       e.preventDefault();
@@ -222,6 +240,7 @@ export default function Viewer() {
       setDragStart({ x, y });
   };
 
+  // --- MODIFICATION 2 : GESTION DU CLIC DANS LE VIDE ---
   const handleMouseDown = (e: React.MouseEvent) => {
       if (movingShapeIndex !== null) return; 
       if (!viewerRef.current) return;
@@ -229,7 +248,13 @@ export default function Viewer() {
       if (currentTool === 'move' || pendingTextPos) return;
 
       const { x, y } = getCoords(e);
-      if (currentTool === 'text') { setPendingTextPos({x, y}); setTextValue(""); return; }
+      
+      // SÉCURITÉ : Si on clique dans le vide avec l'outil texte, on bloque
+      if (currentTool === 'text') { 
+          alert("Avertissement : Veuillez cliquer sur une annotation existante (carré, cercle, polygone) pour y attacher un texte.");
+          return; 
+      }
+      
       if (currentTool === 'polygon') { setPolyPoints(prev => [...prev, {x, y}]); return; }
       setDragStart({x, y});
       setCurrentDragShape({ type: currentTool, x, y, w: 0, h: 0 }); 
@@ -244,8 +269,15 @@ export default function Viewer() {
           const pEnd = viewerRef.current.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(currentX, currentY));
           const deltaX = pEnd.x - pStart.x;
           const deltaY = pEnd.y - pStart.y;
+          
           const newShapes = [...shapes];
-          newShapes[movingShapeIndex] = { ...shape, x: shape.x + deltaX, y: shape.y + deltaY };
+
+          if (shape.type === 'text') {
+              const currentW = shape.w != null && shape.w !== 0 ? shape.w : shape.x;
+              const currentH = shape.h != null && shape.h !== 0 ? shape.h : shape.y;
+              newShapes[movingShapeIndex] = { ...shape, w: currentW + deltaX, h: currentH + deltaY };
+          }
+
           setShapes(newShapes);
           setDragStart({x: currentX, y: currentY}); 
           return;
@@ -309,8 +341,16 @@ export default function Viewer() {
       }
 
       if (pendingTextPos && textValue.trim() !== "" && viewerRef.current) {
-          const pt = viewerRef.current.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(pendingTextPos.x, pendingTextPos.y));
-          setShapes(prev => [...prev, { type: 'text', x: pt.x, y: pt.y, w:0, h:0, text: textValue, author: currentUser }]);
+          const ptAnchor = viewerRef.current.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(pendingTextPos.x, pendingTextPos.y));
+          const ptText = viewerRef.current.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(pendingTextPos.x + 60, pendingTextPos.y - 60));
+          
+          setShapes(prev => [...prev, { 
+              type: 'text', 
+              x: ptAnchor.x, y: ptAnchor.y, 
+              w: ptText.x, h: ptText.y,     
+              text: textValue, 
+              author: currentUser 
+          }]);
       }
       setPendingTextPos(null); 
       setCurrentTool('move');
@@ -327,39 +367,30 @@ export default function Viewer() {
       if (!viewerRef.current) return null;
       return shapes.map((shape, idx) => {
           const p1 = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x, shape.y));
-          const p2 = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x + shape.w, shape.y + shape.h));
+          const p2 = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x + (shape.w || 0), shape.y + (shape.h || 0)));
           const sx = p1.x; const sy = p1.y; const sw = p2.x - p1.x; const sh = p2.y - p1.y;
           
           const isMe = shape.author === currentUser;
-          const strokeColor = isMe ? "#10b981" : "#f59e0b"; // Vert (Moi) / Orange (Autre)
+          const strokeColor = isMe ? "#10b981" : "#f59e0b"; 
           const fillColor = isMe ? "rgba(16, 185, 129, 0.3)" : "rgba(245, 158, 11, 0.3)";
-          const cursorStyle = isMe && currentTool === 'move' ? 'grab' : 'not-allowed';
+          
+          // MODIFICATION 3 : Gestion intelligente des curseurs
+          // Si l'outil Texte est sélectionné, le curseur devient une croix sur TOUTES les formes pour indiquer qu'on peut cliquer
+          const cursorStyleShape = currentTool === 'text' ? 'crosshair' : 'default';
+          const cursorStyleText = isMe && currentTool === 'move' ? 'grab' : 'not-allowed';
 
-          // --- ETIQUETTE AUTEUR ---
           const renderAuthorLabel = (x: number, y: number) => {
-              if (!shape.author) return null;
+              if (!shape.author || !showTexts) return null; 
               return (
-                  <text 
-                    x={x} y={y - 5} 
-                    fill={strokeColor} 
-                    fontSize="14" 
-                    fontWeight="bold" 
-                    style={{ pointerEvents: "none", textShadow: "1px 1px 2px black" }}
-                  >
-                    {shape.author}
-                  </text>
+                  <text x={x} y={y - 5} fill={strokeColor} fontSize="14" fontWeight="bold" style={{ pointerEvents: "none", textShadow: "1px 1px 2px black" }}>{shape.author}</text>
               );
           };
 
           if (shape.type === 'rect') return (
               <g key={idx}>
                   {renderAuthorLabel(sx, sy)}
-                  <rect 
-                    x={sx} y={sy} width={sw} height={sh} 
-                    fill={fillColor} stroke={strokeColor} strokeWidth="3" 
-                    onMouseDown={(e) => handleShapeMouseDown(e, idx)} 
-                    style={{ cursor: cursorStyle, pointerEvents: 'auto' }}
-                  />
+                  {/* MODIFICATION 4 : pointerEvents: 'auto' obligatoire pour détecter le clic d'ajout de texte */}
+                  <rect x={sx} y={sy} width={sw} height={sh} fill={fillColor} stroke={strokeColor} strokeWidth="3" onMouseDown={(e) => handleShapeMouseDown(e, idx)} style={{ cursor: cursorStyleShape, pointerEvents: 'auto' }} />
               </g>
           );
           if (shape.type === 'circle') {
@@ -367,12 +398,7 @@ export default function Viewer() {
               return (
                 <g key={idx}>
                     {renderAuthorLabel(sx - pr.x, sy - pr.x)}
-                    <circle 
-                        cx={sx} cy={sy} r={pr.x} 
-                        fill={fillColor} stroke={strokeColor} strokeWidth="3" 
-                        onMouseDown={(e) => handleShapeMouseDown(e, idx)}
-                        style={{ cursor: cursorStyle, pointerEvents: 'auto' }}
-                    />
+                    <circle cx={sx} cy={sy} r={pr.x} fill={fillColor} stroke={strokeColor} strokeWidth="3" onMouseDown={(e) => handleShapeMouseDown(e, idx)} style={{ cursor: cursorStyleShape, pointerEvents: 'auto' }} />
                 </g>
               );
           }
@@ -381,30 +407,35 @@ export default function Viewer() {
                   const s = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(pt.x, pt.y));
                   return `${s.x},${s.y}`;
               }).join(' ');
-              
               const firstPt = shape.points[0];
               const sFirst = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(firstPt.x, firstPt.y));
-              
               return (
                 <g key={idx}>
                     {renderAuthorLabel(sFirst.x, sFirst.y)}
-                    <polygon 
-                        points={pts} fill={fillColor} stroke={strokeColor} strokeWidth="3" 
-                        onMouseDown={(e) => handleShapeMouseDown(e, idx)}
-                        style={{ cursor: cursorStyle, pointerEvents: 'auto' }}
-                    />
+                    <polygon points={pts} fill={fillColor} stroke={strokeColor} strokeWidth="3" onMouseDown={(e) => handleShapeMouseDown(e, idx)} style={{ cursor: cursorStyleShape, pointerEvents: 'auto' }} />
                 </g>
               );
           }
+          
           if (shape.type === 'text' && shape.text) {
               if (editingShapeIndex === idx) return null;
+              if (!showTexts) return null; 
+              
+              const pAnchor = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x, shape.y));
+              const isTextMoved = shape.w != null && shape.h != null && (shape.w !== 0 || shape.h !== 0);
+              const tX = isTextMoved ? shape.w! : shape.x;
+              const tY = isTextMoved ? shape.h! : shape.y;
+              const pText = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(tX, tY));
+
               return (
                   <g key={idx}>
-                      <text x={sx} y={sy - 20} fill={strokeColor} fontSize="12" fontWeight="bold">
+                      <line x1={pAnchor.x} y1={pAnchor.y} x2={pText.x} y2={pText.y} stroke={strokeColor} strokeWidth="2" strokeDasharray="4" />
+                      <circle cx={pAnchor.x} cy={pAnchor.y} r="4" fill={strokeColor} />
+                      <text x={pText.x} y={pText.y - 20} fill={strokeColor} fontSize="12" fontWeight="bold">
                           {shape.author}
                       </text>
                       <text 
-                          x={sx} y={sy} 
+                          x={pText.x} y={pText.y} 
                           fill={isMe ? "#facc15" : "#f87171"} 
                           fontSize="20" 
                           fontWeight="bold" 
@@ -415,7 +446,7 @@ export default function Viewer() {
                           }}
                           style={{
                               textShadow: '1px 1px 2px black', 
-                              cursor: cursorStyle, 
+                              cursor: cursorStyleText, 
                               pointerEvents: 'auto',
                               userSelect: 'none'
                           }}
@@ -506,7 +537,7 @@ export default function Viewer() {
           annotation_label: labelInput,
           extraction_id: extractionId,
           
-          owner: currentUser, // <--- C'EST ICI QU'ON SIGNE LE DOSSIER !
+          owner: currentUser, 
 
           prelevement_type: prelevementType,
           prelevement_date: prelevementDate,
@@ -576,7 +607,11 @@ export default function Viewer() {
             {/* Input Édition Texte Existant */}
             {editingShapeIndex !== null && viewerRef.current && (() => {
                  const shape = shapes[editingShapeIndex];
-                 const pt = viewerRef.current.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x, shape.y));
+                 const isTextMoved = shape.w != null && shape.h != null && (shape.w !== 0 || shape.h !== 0);
+                 const tX = isTextMoved ? shape.w! : shape.x;
+                 const tY = isTextMoved ? shape.h! : shape.y;
+                 const pt = viewerRef.current.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(tX, tY));
+                 
                  return (
                     <div className="absolute bg-slate-800 p-2 rounded-lg shadow-xl border border-blue-500 flex gap-2 pointer-events-auto" style={{ left: pt.x, top: pt.y }}>
                         <input autoFocus type="text" value={textValue} onChange={(e) => setTextValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && confirmText()} className="bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 outline-none" />
@@ -587,7 +622,7 @@ export default function Viewer() {
           </div>
 
           {/* LÉGENDE COLLABORATIVE */}
-          <div className={`absolute top-2 transition-all duration-300 ${showSidebar ? 'right-[470px]' : 'right-200'} bg-slate-900/90 backdrop-blur-md border border-slate-700 p-3 rounded-xl shadow-xl pointer-events-none`}>
+          <div className={`absolute top-4 transition-all duration-300 ${showSidebar ? 'right-[470px]' : 'right-4'} bg-slate-900/90 backdrop-blur-md border border-slate-700 p-3 rounded-xl shadow-xl pointer-events-none z-20`}>
               <div className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-widest flex items-center gap-2">
                  <PersonIcon fontSize="small"/> Collaboration
               </div>
@@ -620,6 +655,11 @@ export default function Viewer() {
                         <button onClick={() => setCurrentTool('circle')} className={`p-3 rounded-xl transition-all ${currentTool === 'circle' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-blue-400'}`} title="Cercle"><RadioButtonUncheckedIcon /></button>
                         <button onClick={() => {setCurrentTool('polygon'); setPolyPoints([])}} className={`p-3 rounded-xl transition-all ${currentTool === 'polygon' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-amber-400'}`} title="Polygone"><PolylineIcon /></button>
                         <button onClick={() => {setCurrentTool('text'); setPendingTextPos(null)}} className={`p-3 rounded-xl transition-all ${currentTool === 'text' ? 'bg-yellow-600 text-white' : 'text-slate-400 hover:text-yellow-400'}`} title="Texte"><TextFieldsIcon /></button>
+                        
+                        <div className="w-px bg-white/10 mx-1 my-2"></div>
+                        <button onClick={() => setShowTexts(!showTexts)} className={`p-3 rounded-xl transition-all ${!showTexts ? 'bg-red-500/20 text-red-400' : 'text-slate-400 hover:text-white'}`} title="Masquer les textes">
+                            {showTexts ? <VisibilityIcon /> : <VisibilityOffIcon />}
+                        </button>
                     </>
                 )}
              </div>
