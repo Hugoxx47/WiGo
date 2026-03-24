@@ -213,14 +213,12 @@ export default function Viewer() {
       return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
-  // --- MODIFICATION 1 : GESTION DU CLIC SUR UNE FORME ---
   const handleShapeMouseDown = (e: React.MouseEvent, index: number) => {
-      // Cas 2 : L'utilisateur veut ajouter du texte à cette forme précise !
       if (currentTool === 'text') {
           e.stopPropagation(); 
           e.preventDefault();
           const { x, y } = getCoords(e);
-          setPendingTextPos({ x, y }); // On ancre le texte là où il a cliqué sur la forme
+          setPendingTextPos({ x, y }); 
           setTextValue(""); 
           return;
       }
@@ -228,7 +226,6 @@ export default function Viewer() {
       if (currentTool !== 'move') return; 
       if (shapes[index].author && shapes[index].author !== currentUser) return;
       
-      // En mode "déplacer", on ne peut déplacer que les textes (les lignes directrices)
       if (shapes[index].type !== 'text') {
           return; 
       }
@@ -240,7 +237,6 @@ export default function Viewer() {
       setDragStart({ x, y });
   };
 
-  // --- MODIFICATION 2 : GESTION DU CLIC DANS LE VIDE ---
   const handleMouseDown = (e: React.MouseEvent) => {
       if (movingShapeIndex !== null) return; 
       if (!viewerRef.current) return;
@@ -249,7 +245,6 @@ export default function Viewer() {
 
       const { x, y } = getCoords(e);
       
-      // SÉCURITÉ : Si on clique dans le vide avec l'outil texte, on bloque
       if (currentTool === 'text') { 
           alert("Avertissement : Veuillez cliquer sur une annotation existante (carré, cercle, polygone) pour y attacher un texte.");
           return; 
@@ -374,8 +369,6 @@ export default function Viewer() {
           const strokeColor = isMe ? "#10b981" : "#f59e0b"; 
           const fillColor = isMe ? "rgba(16, 185, 129, 0.3)" : "rgba(245, 158, 11, 0.3)";
           
-          // MODIFICATION 3 : Gestion intelligente des curseurs
-          // Si l'outil Texte est sélectionné, le curseur devient une croix sur TOUTES les formes pour indiquer qu'on peut cliquer
           const cursorStyleShape = currentTool === 'text' ? 'crosshair' : 'default';
           const cursorStyleText = isMe && currentTool === 'move' ? 'grab' : 'not-allowed';
 
@@ -389,7 +382,6 @@ export default function Viewer() {
           if (shape.type === 'rect') return (
               <g key={idx}>
                   {renderAuthorLabel(sx, sy)}
-                  {/* MODIFICATION 4 : pointerEvents: 'auto' obligatoire pour détecter le clic d'ajout de texte */}
                   <rect x={sx} y={sy} width={sw} height={sh} fill={fillColor} stroke={strokeColor} strokeWidth="3" onMouseDown={(e) => handleShapeMouseDown(e, idx)} style={{ cursor: cursorStyleShape, pointerEvents: 'auto' }} />
               </g>
           );
@@ -407,8 +399,7 @@ export default function Viewer() {
                   const s = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(pt.x, pt.y));
                   return `${s.x},${s.y}`;
               }).join(' ');
-              const firstPt = shape.points[0];
-              const sFirst = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(firstPt.x, firstPt.y));
+              const sFirst = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.points[0].x, shape.points[0].y));
               return (
                 <g key={idx}>
                     {renderAuthorLabel(sFirst.x, sFirst.y)}
@@ -427,25 +418,41 @@ export default function Viewer() {
               const tY = isTextMoved ? shape.h! : shape.y;
               const pText = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(tX, tY));
 
+              const textColor = isMe ? "#facc15" : "#f87171";
+              
+              // On calcule une largeur de bulle en fonction de la taille du texte
+              const textWidth = shape.text.length * 11 + 24;
+
               return (
                   <g key={idx}>
-                      <line x1={pAnchor.x} y1={pAnchor.y} x2={pText.x} y2={pText.y} stroke={strokeColor} strokeWidth="2" strokeDasharray="4" />
+                      <line x1={pAnchor.x} y1={pAnchor.y} x2={pText.x} y2={pText.y} stroke={strokeColor} strokeWidth="2" strokeDasharray="4" style={{ pointerEvents: 'none', opacity: 0.8 }} />
                       <circle cx={pAnchor.x} cy={pAnchor.y} r="4" fill={strokeColor} />
-                      <text x={pText.x} y={pText.y - 20} fill={strokeColor} fontSize="12" fontWeight="bold">
+                      
+                      {/* Nom de l'auteur au dessus de la bulle */}
+                      <text x={pText.x} y={pText.y - 20} fill={strokeColor} fontSize="12" fontWeight="bold" textAnchor="middle" style={{ pointerEvents: 'none', textShadow: '1px 1px 2px black' }}>
                           {shape.author}
                       </text>
+                      
+                      <rect 
+                          x={pText.x - textWidth / 2} y={pText.y - 13} 
+                          width={textWidth} height="26" 
+                          fill="rgba(15, 23, 42, 0.8)" rx="6"
+                          style={{ pointerEvents: 'none' }}
+                      />
+
                       <text 
                           x={pText.x} y={pText.y} 
-                          fill={isMe ? "#facc15" : "#f87171"} 
+                          fill={textColor} 
                           fontSize="20" 
                           fontWeight="bold" 
+                          textAnchor="middle" alignmentBaseline="middle"
                           onMouseDown={(e) => handleShapeMouseDown(e, idx)} 
                           onDoubleClick={(e) => {
                               e.stopPropagation();
                               startEditingText(idx);
                           }}
                           style={{
-                              textShadow: '1px 1px 2px black', 
+                              textShadow: '2px 2px 4px black', 
                               cursor: cursorStyleText, 
                               pointerEvents: 'auto',
                               userSelect: 'none'
@@ -613,7 +620,7 @@ export default function Viewer() {
                  const pt = viewerRef.current.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(tX, tY));
                  
                  return (
-                    <div className="absolute bg-slate-800 p-2 rounded-lg shadow-xl border border-blue-500 flex gap-2 pointer-events-auto" style={{ left: pt.x, top: pt.y }}>
+                    <div className="absolute bg-slate-800 p-2 rounded-lg shadow-xl border border-blue-500 flex gap-2 pointer-events-auto" style={{ left: pt.x - 50, top: pt.y - 20 }}>
                         <input autoFocus type="text" value={textValue} onChange={(e) => setTextValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && confirmText()} className="bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 outline-none" />
                         <button onClick={confirmText} className="bg-blue-600 text-white px-2 rounded">MAJ</button>
                     </div>
