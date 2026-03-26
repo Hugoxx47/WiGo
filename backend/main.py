@@ -1,13 +1,16 @@
 import time
 import os
-import shutil # Pour supprimer le dossier physique
+import shutil
 import pyvips
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles 
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional, Any, Dict
+from minio import Minio
+from minio.error import S3Error
+
 import models
 import database
 
@@ -21,21 +24,38 @@ except Exception as e:
 app = FastAPI()
 
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 DZI_FOLDER = "/app/dzi_data"
 os.makedirs(DZI_FOLDER, exist_ok=True)
 app.mount("/dzi_data", StaticFiles(directory=DZI_FOLDER), name="dzi_data")
 
+# --- CONFIGURATION MINIO ---
+MINIO_HOST = "minio:9000"
+ACCESS_KEY = "minioadmin"
+SECRET_KEY = "minioadmin"
+BUCKET_NAME = "biopsie"
+
+# Initialisation du client MinIO
+minio_client = Minio(
+    MINIO_HOST, access_key=ACCESS_KEY, secret_key=SECRET_KEY, secure=False
+)
+
+
 # --- SCHEMAS ---
 class BiopsySchema(BaseModel):
     id: int
     image_url: Optional[str] = None
     status: str
+
     class Config:
         from_attributes = True
+
 
 class PatientSchema(BaseModel):
     id: int
@@ -45,9 +65,11 @@ class PatientSchema(BaseModel):
     birth_date: Optional[str] = None
     family_history: Optional[str] = None
     medical_history: Optional[str] = None
-    biopsies: List[BiopsySchema] = [] 
+    biopsies: List[BiopsySchema] = []
+
     class Config:
-        from_attributes = True 
+        from_attributes = True
+
 
 class DrawingSchema(BaseModel):
     type: str
@@ -60,6 +82,7 @@ class DrawingSchema(BaseModel):
     points: Optional[List[Dict[str, float]]] = []
     author: Optional[str] = "Inconnu"
 
+
 class AnalysisPayload(BaseModel):
     filename: str
     x: int
@@ -67,11 +90,11 @@ class AnalysisPayload(BaseModel):
     width: int
     height: int
     patient_folder: str
-    patient_name: str     
-    annotation_label: str 
+    patient_name: str
+    annotation_label: str
     extraction_id: Optional[int] = None
-    
-    owner: Optional[str] = "Inconnu" 
+
+    owner: Optional[str] = "Inconnu"
 
     # Champs Formulaire
     birth_date: Optional[str] = ""
@@ -81,7 +104,7 @@ class AnalysisPayload(BaseModel):
     prelevement_date: Optional[str] = ""
     block_number: Optional[str] = ""
     fixation: Optional[str] = ""
-    slide_count: Optional[Any] = None 
+    slide_count: Optional[Any] = None
     staining: Optional[List[str]] = []
     macro_obs: Optional[str] = ""
     micro_obs: Optional[str] = ""
@@ -97,75 +120,159 @@ class AnalysisPayload(BaseModel):
 
     drawings: List[DrawingSchema] = []
 
+
 # --- ROUTES ---
 @app.post("/seed")
 def seed_database(db: Session = Depends(database.get_db)):
     try:
         models.Base.metadata.drop_all(bind=database.engine)
         models.Base.metadata.create_all(bind=database.engine)
-        
+
         patients_data = [
-            {"name": "Jean Dupont", "age": 65, "folder": "CMU-1", "birth": "1958-05-12", "family": "Non", "med": "Hypertension"},
-            {"name": "Marie Curie", "age": 58, "folder": "CASE-2", "birth": "1965-11-07", "family": "Oui", "med": "Suivi annuel"},
-            {"name": "Paul Martin", "age": 42, "folder": "X-99", "birth": "1982-02-23", "family": "Non", "med": "RAS"}
+            {
+                "name": "Jean Dupont",
+                "age": 65,
+                "folder": "CMU-1",
+                "birth": "1958-05-12",
+                "family": "Non",
+                "med": "Hypertension",
+            },
+            {
+                "name": "Marie Curie",
+                "age": 58,
+                "folder": "CASE-2",
+                "birth": "1965-11-07",
+                "family": "Oui",
+                "med": "Suivi annuel",
+            },
+            {
+                "name": "Paul Martin",
+                "age": 42,
+                "folder": "X-99",
+                "birth": "1982-02-23",
+                "family": "Non",
+                "med": "RAS",
+            },
         ]
-        
+
         default_image = "biopsie_cmu_1.dzi"
-        
+
         count = 0
         for p in patients_data:
             patient = models.Patient(
-                name=p["name"], age=p["age"], folder_id=p["folder"],
-                birth_date=p["birth"], family_history=p["family"], medical_history=p["med"]
+                name=p["name"],
+                age=p["age"],
+                folder_id=p["folder"],
+                birth_date=p["birth"],
+                family_history=p["family"],
+                medical_history=p["med"],
             )
             db.add(patient)
             db.commit()
             db.refresh(patient)
-            
-            biopsy = models.Biopsy(patient_id=patient.id, image_url=default_image, status="Non analysé")
+
+            biopsy = models.Biopsy(
+                patient_id=patient.id, image_url=default_image, status="Non analysé"
+            )
             db.add(biopsy)
             count += 1
-        
+
         db.commit()
         return {"message": f"Succès ! BDD Réinitialisée avec {count} patients."}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/patients", response_model=List[PatientSchema])
 def get_patients(db: Session = Depends(database.get_db)):
     return db.query(models.Patient).all()
 
+
 @app.post("/extract-roi")
 def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
-    patient = db.query(models.Patient).filter(models.Patient.folder_id == data.patient_folder).first()
+    patient = (
+        db.query(models.Patient)
+        .filter(models.Patient.folder_id == data.patient_folder)
+        .first()
+    )
     if not patient:
-        patient = models.Patient(name=data.patient_name, age=0, folder_id=data.patient_folder)
+        patient = models.Patient(
+            name=data.patient_name, age=0, folder_id=data.patient_folder
+        )
         db.add(patient)
         db.commit()
         db.refresh(patient)
 
-    if data.birth_date: patient.birth_date = data.birth_date
-    if data.family_history: patient.family_history = data.family_history
-    if data.medical_history: patient.medical_history = data.medical_history
+    if data.birth_date:
+        patient.birth_date = data.birth_date
+    if data.family_history:
+        patient.family_history = data.family_history
+    if data.medical_history:
+        patient.medical_history = data.medical_history
     db.commit()
 
-    safe_folder = "".join(c for c in data.patient_folder if c.isalnum() or c in (' ', '-', '_')).strip()
+    safe_folder = "".join(
+        c for c in data.patient_folder if c.isalnum() or c in (" ", "-", "_")
+    ).strip()
     patient_dir = os.path.join(DZI_FOLDER, safe_folder, "extractions")
     os.makedirs(patient_dir, exist_ok=True)
     filename_str = f"extraction_{int(time.time())}.svs"
     output_path = os.path.join(patient_dir, filename_str)
-    source_path = "/app/CMU-1.svs"
 
+    # L'image source
+    source_minio_name = "CMU-1.svs"
+    source_path = f"/app/{source_minio_name}"
+
+    # --- Si l'image source n'est pas dans le conteneur, on la télécharge depuis MinIO ! ---
+    if not os.path.exists(source_path):
+        print(
+            f"📥 L'image source n'est pas en local. Téléchargement de {source_minio_name} depuis MinIO..."
+        )
+        try:
+            minio_client.fget_object(BUCKET_NAME, source_minio_name, source_path)
+            print("✅ Image source téléchargée avec succès !")
+        except Exception as e:
+            print(f"❌ Erreur lors du téléchargement de l'image source : {e}")
+            raise HTTPException(
+                status_code=500, detail="Impossible de trouver l'image source sur MinIO"
+            )
+
+    # Maintenant on est sûr que l'image existe, on peut la découper !
     if os.path.exists(source_path):
         try:
+            print("✂️ Découpage de l'image avec PyVips...")
             image = pyvips.Image.new_from_file(source_path, access="sequential")
             safe_x = max(0, min(data.x, image.width))
             safe_y = max(0, min(data.y, image.height))
             region = image.extract_area(safe_x, safe_y, data.width, data.height)
-            region.tiffsave(output_path, compression="jpeg", Q=90, tile=True, pyramid=True, bigtiff=True)
+            region.tiffsave(
+                output_path,
+                compression="jpeg",
+                Q=90,
+                tile=True,
+                pyramid=True,
+                bigtiff=True,
+            )
+
+            # --- UPLOAD VERS MINIO ---
+            try:
+                minio_object_name = f"{safe_folder}/extractions/{filename_str}"
+                print(f"☁️ Upload de l'extraction vers MinIO ({minio_object_name})...")
+                minio_client.fput_object(
+                    bucket_name=BUCKET_NAME,
+                    object_name=minio_object_name,
+                    file_path=output_path,
+                )
+                print("✅ Fichier sauvegardé sur MinIO avec succès !")
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                    print("🧹 Fichier local temporaire supprimé pour économiser de l'espace serveur.")
+            except Exception as minio_err:
+                print(f"❌ Erreur lors de l'upload sur MinIO : {minio_err}")
+
         except Exception as e:
-            print(f"⚠️ Erreur extraction: {e}")
+            print(f"⚠️ Erreur extraction PyVips: {e}")
 
     sc = data.slide_count if isinstance(data.slide_count, int) else None
 
@@ -173,7 +280,10 @@ def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
         patient_id=patient.id,
         label=data.annotation_label,
         dzi_url=f"{safe_folder}/extractions/{filename_str}",
-        x=data.x, y=data.y, w=data.width, h=data.height,
+        x=data.x,
+        y=data.y,
+        w=data.width,
+        h=data.height,
         owner=data.owner,
         prelevement_type=data.prelevement_type,
         prelevement_date=data.prelevement_date,
@@ -191,20 +301,29 @@ def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
         comments=data.comments,
         status=data.status,
         pathologist=data.pathologist,
-        validation_date=data.validation_date
+        validation_date=data.validation_date,
     )
     db.add(new_ext)
     db.commit()
-    db.refresh(new_ext) 
-    
-    return {"message": "Dossier créé avec succès", "id": new_ext.id, "extraction_id": new_ext.id}
+    db.refresh(new_ext)
+
+    return {
+        "message": "Dossier créé avec succès",
+        "id": new_ext.id,
+        "extraction_id": new_ext.id,
+    }
+
 
 @app.post("/annotations/save")
 def update_analysis(data: AnalysisPayload, db: Session = Depends(database.get_db)):
     if not data.extraction_id:
         raise HTTPException(status_code=400, detail="ID extraction manquant")
-        
-    ext = db.query(models.Extraction).filter(models.Extraction.id == data.extraction_id).first()
+
+    ext = (
+        db.query(models.Extraction)
+        .filter(models.Extraction.id == data.extraction_id)
+        .first()
+    )
     if not ext:
         raise HTTPException(status_code=404, detail="Dossier introuvable")
 
@@ -227,46 +346,61 @@ def update_analysis(data: AnalysisPayload, db: Session = Depends(database.get_db
     ext.status = data.status
     ext.pathologist = data.pathologist
     ext.validation_date = data.validation_date
-    
+
     db.query(models.Drawing).filter(models.Drawing.extraction_id == ext.id).delete()
-    
+
     for d in data.drawings:
         new_draw = models.Drawing(
             extraction_id=ext.id,
             type=d.type,
-            x=d.x, y=d.y, w=d.w, h=d.h,
+            x=d.x,
+            y=d.y,
+            w=d.w,
+            h=d.h,
             radius=d.radius,
             text=d.text,
             points=d.points,
-            author=d.author
+            author=d.author,
         )
         db.add(new_draw)
 
     db.commit()
     return {"message": "Dossier et annotations mis à jour"}
 
+
 @app.get("/patients/{folder_id}/extractions")
 def get_extractions(folder_id: str, db: Session = Depends(database.get_db)):
-    patient = db.query(models.Patient).filter(models.Patient.folder_id == folder_id).first()
-    if not patient: return []
+    patient = (
+        db.query(models.Patient).filter(models.Patient.folder_id == folder_id).first()
+    )
+    if not patient:
+        return []
     results = []
     for e in patient.extractions:
-        results.append({
-            "id": e.id,
-            "filename": e.label,
-            "url": f"http://localhost:8000/dzi_data/{e.dzi_url}",
-            "roi": { "x": e.x, "y": e.y, "w": e.w, "h": e.h },
-            "diagnosis": e.diagnosis,
-            "status": e.status,
-            "owner": e.owner
-        })
+        results.append(
+            {
+                "id": e.id,
+                "filename": e.label,
+                "url": f"http://localhost:8000/dzi_data/{e.dzi_url}",
+                "roi": {"x": e.x, "y": e.y, "w": e.w, "h": e.h},
+                "diagnosis": e.diagnosis,
+                "status": e.status,
+                "owner": e.owner,
+            }
+        )
     return results
+
 
 @app.get("/extractions/{extraction_id}/details")
 def get_details(extraction_id: int, db: Session = Depends(database.get_db)):
-    ext = db.query(models.Extraction).filter(models.Extraction.id == extraction_id).first()
-    if not ext: raise HTTPException(status_code=404, detail="Non trouvé")
-    
+    ext = (
+        db.query(models.Extraction)
+        .filter(models.Extraction.id == extraction_id)
+        .first()
+    )
+    if not ext:
+        raise HTTPException(status_code=404, detail="Non trouvé")
+
     return {
         "id": ext.id,
         "filename": ext.label,
@@ -289,24 +423,49 @@ def get_details(extraction_id: int, db: Session = Depends(database.get_db)):
         "validation_date": ext.validation_date,
         "drawings": [
             {
-                "type": d.type, "x": d.x, "y": d.y, 
-                "w": d.w, "h": d.h, "radius": d.radius, 
-                "text": d.text, "points": d.points,
-                "author": d.author
-            } for d in ext.drawings
-        ]
+                "type": d.type,
+                "x": d.x,
+                "y": d.y,
+                "w": d.w,
+                "h": d.h,
+                "radius": d.radius,
+                "text": d.text,
+                "points": d.points,
+                "author": d.author,
+            }
+            for d in ext.drawings
+        ],
     }
 
+
 @app.delete("/extractions/{extraction_id}")
-def delete_extraction(extraction_id: int, username: str, db: Session = Depends(database.get_db)):
-    ext = db.query(models.Extraction).filter(models.Extraction.id == extraction_id).first()
-    
+def delete_extraction(
+    extraction_id: int, username: str, db: Session = Depends(database.get_db)
+):
+    ext = (
+        db.query(models.Extraction)
+        .filter(models.Extraction.id == extraction_id)
+        .first()
+    )
+
     if not ext:
         raise HTTPException(status_code=404, detail="Introuvable")
-    
+
     if ext.owner != username:
-        raise HTTPException(status_code=403, detail="Vous ne pouvez supprimer que vos propres extractions")
-        
+        raise HTTPException(
+            status_code=403,
+            detail="Vous ne pouvez supprimer que vos propres extractions",
+        )
+
+    # --- Suppression du gros fichier sur le Cloud MinIO ---
+    try:
+        print(f"🗑️ Suppression de l'extraction sur MinIO : {ext.dzi_url}")
+        minio_client.remove_object(BUCKET_NAME, ext.dzi_url)
+        print("✅ Fichier supprimé de MinIO avec succès !")
+    except Exception as minio_err:
+        print(f"⚠️ Erreur lors de la suppression sur MinIO : {minio_err}")
+
+    # --- Suppression du cache local sur ton PC/Serveur ---
     try:
         file_path = os.path.join(DZI_FOLDER, ext.dzi_url)
         if os.path.exists(file_path):
@@ -315,9 +474,10 @@ def delete_extraction(extraction_id: int, username: str, db: Session = Depends(d
             if os.path.exists(files_dir):
                 shutil.rmtree(files_dir)
     except Exception as e:
-        print(f"Erreur suppression fichiers: {e}")
+        print(f"Erreur suppression fichiers locaux: {e}")
 
+    # --- Suppression des métadonnées dans la base SQL ---
     db.delete(ext)
     db.commit()
-    
-    return {"message": "Extraction supprimée"}
+
+    return {"message": "Extraction et fichiers cloud supprimés avec succès"}

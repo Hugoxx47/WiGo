@@ -8,7 +8,7 @@ from minio.error import S3Error
 MINIO_HOST = "minio:9000" 
 ACCESS_KEY = "minioadmin"
 SECRET_KEY = "minioadmin"
-BUCKET_NAME = "biopsies"
+BUCKET_NAME = "biopsie"
 SOURCE_FILE = "CMU-1.svs"
 
 LOCAL_INPUT_FILE = "temp_input.svs"
