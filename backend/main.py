@@ -184,16 +184,16 @@ async def analyze_image_with_ai(data: AnalysisPayload):
         # 3.1 Récupération des points (Mode 'centroids' pour avoir 1 seul point par cellule !)
         contour_points = []
         try:
-            print(f"📍 Appel segment_points...")
+            print(f"📍 Appel segment_points (mode polygon)...")
             contour_points = await instanseg_client.segment_points(
                 file_bytes=png_data,
                 model="brightfield_nuclei",
                 target="nuclei",
-                mode="centroids",  # <--- MAGIE: 'centroids' au lieu de 'polygon'
+                mode="polygon",  # on récupère des contours plutôt que des centroides
             )
-            print(f"📍 Points reçus : {len(contour_points)} cellules")
+            print(f"📍 Contours reçus : {len(contour_points)} entités")
         except Exception as e:
-            print(f"⚠️ Impossible de récupérer les points InstanSeg : {e}")
+            print(f"⚠️ Impossible de récupérer les contours InstanSeg : {e}")
             contour_points = []
 
         # 4. 📊 ANALYSE MORPHOLOGIQUE DES RÉSULTATS

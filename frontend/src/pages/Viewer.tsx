@@ -45,6 +45,11 @@ interface InstanSegResult {
   [key: string]: unknown;
 }
 
+type InstanSegContour = {
+  color?: string;
+  points: { x: number; y: number }[];
+};
+
 interface OlgaFormField {
   field_key?: string;
   field_label?: string;
@@ -78,9 +83,7 @@ export default function Viewer() {
   const [loading, setLoading] = useState(false);
   const [showSidebar, setShowSidebar] = useState(isAnnotationMode);
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
-  const [aiPoints, setAiPoints] = useState<
-    { x: number; y: number; color?: string }[]
-  >([]);
+  const [aiContours, setAiContours] = useState<InstanSegContour[]>([]);
   const [showAiPoints, setShowAiPoints] = useState(true);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [newExtractionId, setNewExtractionId] = useState<number | null>(null);
@@ -319,7 +322,7 @@ export default function Viewer() {
 
     setLoading(true);
     setAiSuggestion(`L'IA InstanSeg analyse la zone sélectionnée...`);
-    setAiPoints([]);
+    setAiContours([]);
     setShowSidebar(true);
 
     const baseUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -347,27 +350,29 @@ export default function Viewer() {
         const data = (await response.json()) as InstanSegResult;
         setAiSuggestion(data.suggestion);
 
-        // --- CORRECTION CRUCIALE : On additionne le bon point de départ (cropX et cropY) ! ---
-        const points = (data.contour_points || []).flatMap((blob) =>
-          (blob.points || []).map((p) => ({
-            x: p.x + cropX,
-            y: p.y + cropY,
-            color: "#10b981", // On force un beau vert pour que ça ressorte
-          })),
-        );
+        // --- ON STOCKE LES POLYGONES AI AVEC DÉCALAGE (cropX et cropY) ---
+        const contours = (data.contour_points || [])
+          .filter((blob) => Array.isArray(blob.points) && blob.points.length > 2)
+          .map((blob) => ({
+            color: blob.color || "#10b981",
+            points: (blob.points || []).map((p) => ({
+              x: p.x + cropX,
+              y: p.y + cropY,
+            })),
+          }));
 
-        setAiPoints(points);
+        setAiContours(contours);
       } else {
         setAiSuggestion(
           "❌ L'IA a rencontré une erreur (la zone est peut-être trop vaste pour la mémoire).",
         );
-        setAiPoints([]);
+        setAiContours([]);
       }
     } catch {
       setAiSuggestion(
         "❌ Erreur de connexion avec le serveur d'Intelligence Artificielle.",
       );
-      setAiPoints([]);
+      setAiContours([]);
     } finally {
       setLoading(false);
     }
@@ -410,7 +415,7 @@ export default function Viewer() {
     if (confirm("Voulez-vous supprimer VOS annotations ?")) {
       setShapes((prev) => prev.filter((s) => s.author !== currentUser));
       setSelectedShapeIndex(null);
-      setAiPoints([]);
+      setAiContours([]);
     }
   };
 
@@ -829,25 +834,29 @@ export default function Viewer() {
   };
 
   const renderAiPoints = () => {
-    if (!viewerRef.current || aiPoints.length === 0 || !showAiPoints)
+    if (!viewerRef.current || aiContours.length === 0 || !showAiPoints)
       return null;
 
-    return aiPoints.map((point, idx) => {
+    return aiContours.map((contour, idx) => {
       try {
-        const coords =
-          viewerRef.current!.viewport.imageToViewerElementCoordinates(
-            new OpenSeadragon.Point(point.x, point.y),
-          );
+        const pts = contour.points
+          .map((pt) => {
+            const s =
+              viewerRef.current!.viewport.imageToViewerElementCoordinates(
+                new OpenSeadragon.Point(pt.x, pt.y),
+              );
+            return `${s.x},${s.y}`;
+          })
+          .join(" ");
+
         return (
-          <circle
-            key={`ia-point-${idx}`}
-            cx={coords.x}
-            cy={coords.y}
-            r={3} // 🎯 PLUS PETIT ! Parfait pour faire des petits points de cellule
-            fill={point.color || "#10b981"}
-            stroke="#ffffff"
+          <polygon
+            key={`ia-contour-${idx}`}
+            points={pts}
+            fill={contour.color ? `${contour.color}33` : "rgba(16, 185, 129, 0.2)"}
+            stroke={contour.color || "#10b981"}
             strokeWidth="1"
-            style={{ pointerEvents: "none", boxShadow: "0 0 5px black" }}
+            style={{ pointerEvents: "none", filter: "drop-shadow(0 0 3px rgba(0,0,0,0.5))" }}
           />
         );
       } catch (e) {
