@@ -7,3 +7,6 @@ python-multipart
 requests
 pyvips
 minio
+numpy
+instanseg-torch
+httpx

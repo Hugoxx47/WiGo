@@ -39,7 +39,7 @@ services:
   backend:
     build: ./backend
     container_name: p6_backend
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
     volumes:
       - ./backend:/app
       - ./backend/dzi_data:/app/dzi_data 
@@ -56,6 +56,23 @@ services:
       - minio
     networks:
       - app_network
+
+  # --- InstanSeg (Instance Segmentation API) ---
+  instanseg:
+    build: ./instanseg
+    container_name: p6_instanseg
+    ports:
+      - "7000:7000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # --- Frontend (React/Vite) ---
   frontend:

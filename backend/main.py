@@ -2,6 +2,7 @@ import time
 import os
 import shutil
 import pyvips
+import numpy as np
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -10,6 +11,9 @@ from pydantic import BaseModel
 from typing import List, Optional, Any, Dict
 from minio import Minio
 from minio.error import S3Error
+
+# --- IMPORT DU CLIENT INSTANSEG ---
+from instanseg_client import InstanSegClient
 
 import models
 import database
@@ -41,10 +45,14 @@ ACCESS_KEY = "minioadmin"
 SECRET_KEY = "minioadmin"
 BUCKET_NAME = "biopsie"
 
-# Initialisation du client MinIO
 minio_client = Minio(
     MINIO_HOST, access_key=ACCESS_KEY, secret_key=SECRET_KEY, secure=False
 )
+
+# --- INITIALISATION DU CLIENT INSTANSEG ---
+print("🤖 Initialisation du client InstanSeg...")
+instanseg_client = InstanSegClient(base_url="http://instanseg:7000")
+print("✅ Client InstanSeg prêt !")
 
 
 # --- SCHEMAS ---
@@ -52,10 +60,8 @@ class BiopsySchema(BaseModel):
     id: int
     image_url: Optional[str] = None
     status: str
-
     class Config:
         from_attributes = True
-
 
 class PatientSchema(BaseModel):
     id: int
@@ -66,10 +72,8 @@ class PatientSchema(BaseModel):
     family_history: Optional[str] = None
     medical_history: Optional[str] = None
     biopsies: List[BiopsySchema] = []
-
     class Config:
         from_attributes = True
-
 
 class DrawingSchema(BaseModel):
     type: str
@@ -82,7 +86,6 @@ class DrawingSchema(BaseModel):
     points: Optional[List[Dict[str, float]]] = []
     author: Optional[str] = "Inconnu"
 
-
 class AnalysisPayload(BaseModel):
     filename: str
     x: int
@@ -93,10 +96,7 @@ class AnalysisPayload(BaseModel):
     patient_name: str
     annotation_label: str
     extraction_id: Optional[int] = None
-
     owner: Optional[str] = "Inconnu"
-
-    # Champs Formulaire
     birth_date: Optional[str] = ""
     family_history: Optional[str] = ""
     medical_history: Optional[str] = ""
@@ -117,218 +117,188 @@ class AnalysisPayload(BaseModel):
     status: Optional[str] = ""
     pathologist: Optional[str] = ""
     validation_date: Optional[str] = ""
-
     drawings: List[DrawingSchema] = []
 
-
-# --- ROUTES ---
-@app.post("/seed")
-def seed_database(db: Session = Depends(database.get_db)):
+# --- ROUTE HEALTH CHECK ---
+@app.get("/health")
+async def health_check():
+    """Vérife la santé de tous les services"""
     try:
-        models.Base.metadata.drop_all(bind=database.engine)
-        models.Base.metadata.create_all(bind=database.engine)
-
-        patients_data = [
-            {
-                "name": "Jean Dupont",
-                "age": 65,
-                "folder": "CMU-1",
-                "birth": "1958-05-12",
-                "family": "Non",
-                "med": "Hypertension",
-            },
-            {
-                "name": "Marie Curie",
-                "age": 58,
-                "folder": "CASE-2",
-                "birth": "1965-11-07",
-                "family": "Oui",
-                "med": "Suivi annuel",
-            },
-            {
-                "name": "Paul Martin",
-                "age": 42,
-                "folder": "X-99",
-                "birth": "1982-02-23",
-                "family": "Non",
-                "med": "RAS",
-            },
-        ]
-
-        default_image = "biopsie_cmu_1.dzi"
-
-        count = 0
-        for p in patients_data:
-            patient = models.Patient(
-                name=p["name"],
-                age=p["age"],
-                folder_id=p["folder"],
-                birth_date=p["birth"],
-                family_history=p["family"],
-                medical_history=p["med"],
-            )
-            db.add(patient)
-            db.commit()
-            db.refresh(patient)
-
-            biopsy = models.Biopsy(
-                patient_id=patient.id, image_url=default_image, status="Non analysé"
-            )
-            db.add(biopsy)
-            count += 1
-
-        db.commit()
-        return {"message": f"Succès ! BDD Réinitialisée avec {count} patients."}
+        # Vérifier InstanSeg
+        instanseg_health = await instanseg_client.health()
+        return {
+            "status": "ok",
+            "backend": "connected",
+            "instanseg": instanseg_health,
+            "database": "connected"
+        }
     except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "status": "degraded",
+            "backend": "connected",
+            "instanseg": {"error": str(e), "status": "disconnected"},
+            "database": "connected"
+        }, 503
 
+# --- ROUTE IA : ANALYSE INSTANSEG ---
+@app.post("/analyze-ai")
+async def analyze_image_with_ai(data: AnalysisPayload):
+    source_path = "/app/CMU-1.svs"
+    if not os.path.exists(source_path):
+        raise HTTPException(status_code=404, detail="Image source introuvable.")
+
+    try:
+        # 1. Extraction de la zone dessinée par le médecin
+        image = pyvips.Image.new_from_file(source_path, access="sequential")
+        safe_x = max(0, min(data.x, image.width))
+        safe_y = max(0, min(data.y, image.height))
+        safe_w = min(data.width, image.width - safe_x)
+        safe_h = min(data.height, image.height - safe_y)
+        
+        # 🛑 SECURITÉ ANTI-CRASH 🛑
+        # L'IA est très gourmande. On empêche l'analyse si la zone est plus grande que 1500x1500px
+        if safe_w > 1500 or safe_h > 1500:
+             return {
+                 "suggestion": "❌ Zone trop vaste. L'IA requiert un patch plus petit (zoom maximum). Dessinez un rectangle plus petit (max 1500x1500px).",
+                 "cell_count": 0
+             }
+
+        print(f"📐 Extraction région {safe_w}x{safe_h}px...")
+        region = image.extract_area(safe_x, safe_y, safe_w, safe_h)
+
+        # 2. Conversion en PNG bytes pour le service InstanSeg
+        png_data = region.write_to_buffer(".png")
+        
+        # 3. 🧠 APPEL AU SERVICE INSTANSEG
+        print(f"🧠 Analyse InstanSeg en cours ({safe_w}x{safe_h} pixels)...")
+        try:
+            segment_result = await instanseg_client.segment(
+                file_bytes=png_data,
+                model="brightfield_nuclei",
+                target="nuclei"
+            )
+        except Exception as e:
+            print(f"❌ Erreur InstanSeg : {e}")
+            raise HTTPException(status_code=503, detail=f"Service InstanSeg indisponible : {str(e)}")
+
+        # 4. 📊 ANALYSE MORPHOLOGIQUE DES RÉSULTATS
+        instances = segment_result.instances
+        cell_count = segment_result.instance_count
+
+        if cell_count > 0:
+            cell_areas = [inst.area_px for inst in instances]
+            avg_size = int(np.mean(cell_areas))
+            max_size = int(np.max(cell_areas))
+            
+            # Évaluation du pléomorphisme (critère du Grade SBR)
+            pleomorphism = "Faible (Noyaux réguliers)"
+            if max_size > avg_size * 3:
+                pleomorphism = "Élevé (Atypies cytonucléaires marquées)"
+            elif max_size > avg_size * 2:
+                pleomorphism = "Modéré"
+
+            # Densité (Cellules / Mégapixel)
+            area_pixels = safe_w * safe_h
+            density = round((cell_count / area_pixels) * 1000000)
+
+            result_message = (
+                f"🔬 Bilan InstanSeg :\n"
+                f"• Noyaux détectés : {cell_count}\n"
+                f"• Densité : {density} cellules / Mpx\n"
+                f"• Taille moyenne : {avg_size} px²\n"
+                f"• Pléomorphisme : {pleomorphism}\n"
+                f"• Temps traitement : {segment_result.processing_time_s}s"
+            )
+        else:
+            result_message = "🔬 Bilan InstanSeg : Aucune structure nucléaire détectée dans cette zone."
+
+        print(f"✅ Résultat IA : {cell_count} cellules.")
+        return {"suggestion": result_message, "cell_count": cell_count}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Erreur IA : {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/patients", response_model=List[PatientSchema])
 def get_patients(db: Session = Depends(database.get_db)):
     return db.query(models.Patient).all()
 
-
 @app.post("/extract-roi")
 def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
-    patient = (
-        db.query(models.Patient)
-        .filter(models.Patient.folder_id == data.patient_folder)
-        .first()
-    )
+    patient = db.query(models.Patient).filter(models.Patient.folder_id == data.patient_folder).first()
     if not patient:
-        patient = models.Patient(
-            name=data.patient_name, age=0, folder_id=data.patient_folder
-        )
+        patient = models.Patient(name=data.patient_name, age=0, folder_id=data.patient_folder)
         db.add(patient)
         db.commit()
         db.refresh(patient)
 
-    if data.birth_date:
-        patient.birth_date = data.birth_date
-    if data.family_history:
-        patient.family_history = data.family_history
-    if data.medical_history:
-        patient.medical_history = data.medical_history
+    if data.birth_date: patient.birth_date = data.birth_date
+    if data.family_history: patient.family_history = data.family_history
+    if data.medical_history: patient.medical_history = data.medical_history
     db.commit()
 
-    safe_folder = "".join(
-        c for c in data.patient_folder if c.isalnum() or c in (" ", "-", "_")
-    ).strip()
+    safe_folder = "".join(c for c in data.patient_folder if c.isalnum() or c in (' ', '-', '_')).strip()
     patient_dir = os.path.join(DZI_FOLDER, safe_folder, "extractions")
     os.makedirs(patient_dir, exist_ok=True)
     filename_str = f"extraction_{int(time.time())}.svs"
     output_path = os.path.join(patient_dir, filename_str)
 
-    # L'image source
     source_minio_name = "CMU-1.svs"
     source_path = f"/app/{source_minio_name}"
 
-    # --- Si l'image source n'est pas dans le conteneur, on la télécharge depuis MinIO ! ---
     if not os.path.exists(source_path):
-        print(
-            f"📥 L'image source n'est pas en local. Téléchargement de {source_minio_name} depuis MinIO..."
-        )
+        print(f"📥 L'image source n'est pas en local. Téléchargement depuis MinIO...")
         try:
             minio_client.fget_object(BUCKET_NAME, source_minio_name, source_path)
-            print("✅ Image source téléchargée avec succès !")
         except Exception as e:
-            print(f"❌ Erreur lors du téléchargement de l'image source : {e}")
-            raise HTTPException(
-                status_code=500, detail="Impossible de trouver l'image source sur MinIO"
-            )
+            raise HTTPException(status_code=500, detail="Impossible de trouver l'image source sur MinIO")
 
-    # Maintenant on est sûr que l'image existe, on peut la découper !
     if os.path.exists(source_path):
         try:
-            print("✂️ Découpage de l'image avec PyVips...")
             image = pyvips.Image.new_from_file(source_path, access="sequential")
             safe_x = max(0, min(data.x, image.width))
             safe_y = max(0, min(data.y, image.height))
             region = image.extract_area(safe_x, safe_y, data.width, data.height)
-            region.tiffsave(
-                output_path,
-                compression="jpeg",
-                Q=90,
-                tile=True,
-                pyramid=True,
-                bigtiff=True,
-            )
+            region.tiffsave(output_path, compression="jpeg", Q=90, tile=True, pyramid=True, bigtiff=True)
 
-            # --- UPLOAD VERS MINIO ---
             try:
                 minio_object_name = f"{safe_folder}/extractions/{filename_str}"
-                print(f"☁️ Upload de l'extraction vers MinIO ({minio_object_name})...")
-                minio_client.fput_object(
-                    bucket_name=BUCKET_NAME,
-                    object_name=minio_object_name,
-                    file_path=output_path,
-                )
-                print("✅ Fichier sauvegardé sur MinIO avec succès !")
+                minio_client.fput_object(bucket_name=BUCKET_NAME, object_name=minio_object_name, file_path=output_path)
                 if os.path.exists(output_path):
                     os.remove(output_path)
-                    print("🧹 Fichier local temporaire supprimé pour économiser de l'espace serveur.")
             except Exception as minio_err:
-                print(f"❌ Erreur lors de l'upload sur MinIO : {minio_err}")
+                print(f"❌ Erreur MinIO : {minio_err}")
 
         except Exception as e:
-            print(f"⚠️ Erreur extraction PyVips: {e}")
+            print(f"⚠️ Erreur PyVips: {e}")
 
     sc = data.slide_count if isinstance(data.slide_count, int) else None
 
     new_ext = models.Extraction(
-        patient_id=patient.id,
-        label=data.annotation_label,
-        dzi_url=f"{safe_folder}/extractions/{filename_str}",
-        x=data.x,
-        y=data.y,
-        w=data.width,
-        h=data.height,
-        owner=data.owner,
-        prelevement_type=data.prelevement_type,
-        prelevement_date=data.prelevement_date,
-        block_number=data.block_number,
-        fixation=data.fixation,
-        slide_count=sc,
-        staining=data.staining,
-        macro_obs=data.macro_obs,
-        micro_obs=data.micro_obs,
-        histo_type=data.histo_type,
-        sbr_grade=data.sbr_grade,
-        margins=data.margins,
-        hormonal_receptors=data.hormonal_receptors,
-        diagnosis=data.diagnosis,
-        comments=data.comments,
-        status=data.status,
-        pathologist=data.pathologist,
-        validation_date=data.validation_date,
+        patient_id=patient.id, label=data.annotation_label, dzi_url=f"{safe_folder}/extractions/{filename_str}",
+        x=data.x, y=data.y, w=data.width, h=data.height, owner=data.owner,
+        prelevement_type=data.prelevement_type, prelevement_date=data.prelevement_date,
+        block_number=data.block_number, fixation=data.fixation, slide_count=sc,
+        staining=data.staining, macro_obs=data.macro_obs, micro_obs=data.micro_obs,
+        histo_type=data.histo_type, sbr_grade=data.sbr_grade, margins=data.margins,
+        hormonal_receptors=data.hormonal_receptors, diagnosis=data.diagnosis,
+        comments=data.comments, status=data.status, pathologist=data.pathologist,
+        validation_date=data.validation_date
     )
     db.add(new_ext)
     db.commit()
     db.refresh(new_ext)
 
-    return {
-        "message": "Dossier créé avec succès",
-        "id": new_ext.id,
-        "extraction_id": new_ext.id,
-    }
-
+    return {"message": "Dossier créé avec succès", "id": new_ext.id, "extraction_id": new_ext.id}
 
 @app.post("/annotations/save")
 def update_analysis(data: AnalysisPayload, db: Session = Depends(database.get_db)):
-    if not data.extraction_id:
-        raise HTTPException(status_code=400, detail="ID extraction manquant")
-
-    ext = (
-        db.query(models.Extraction)
-        .filter(models.Extraction.id == data.extraction_id)
-        .first()
-    )
-    if not ext:
-        raise HTTPException(status_code=404, detail="Dossier introuvable")
-
+    if not data.extraction_id: raise HTTPException(status_code=400, detail="ID manquant")
+    ext = db.query(models.Extraction).filter(models.Extraction.id == data.extraction_id).first()
+    if not ext: raise HTTPException(status_code=404, detail="Introuvable")
     sc = data.slide_count if isinstance(data.slide_count, int) else None
-
     ext.prelevement_type = data.prelevement_type
     ext.prelevement_date = data.prelevement_date
     ext.block_number = data.block_number
@@ -346,138 +316,59 @@ def update_analysis(data: AnalysisPayload, db: Session = Depends(database.get_db
     ext.status = data.status
     ext.pathologist = data.pathologist
     ext.validation_date = data.validation_date
-
     db.query(models.Drawing).filter(models.Drawing.extraction_id == ext.id).delete()
-
     for d in data.drawings:
         new_draw = models.Drawing(
-            extraction_id=ext.id,
-            type=d.type,
-            x=d.x,
-            y=d.y,
-            w=d.w,
-            h=d.h,
-            radius=d.radius,
-            text=d.text,
-            points=d.points,
-            author=d.author,
+            extraction_id=ext.id, type=d.type, x=d.x, y=d.y, w=d.w, h=d.h,
+            radius=d.radius, text=d.text, points=d.points, author=d.author,
         )
         db.add(new_draw)
-
     db.commit()
-    return {"message": "Dossier et annotations mis à jour"}
-
+    return {"message": "Mis à jour"}
 
 @app.get("/patients/{folder_id}/extractions")
 def get_extractions(folder_id: str, db: Session = Depends(database.get_db)):
-    patient = (
-        db.query(models.Patient).filter(models.Patient.folder_id == folder_id).first()
-    )
-    if not patient:
-        return []
+    patient = db.query(models.Patient).filter(models.Patient.folder_id == folder_id).first()
+    if not patient: return []
     results = []
     for e in patient.extractions:
-        results.append(
-            {
-                "id": e.id,
-                "filename": e.label,
-                "url": f"http://localhost:8000/dzi_data/{e.dzi_url}",
-                "roi": {"x": e.x, "y": e.y, "w": e.w, "h": e.h},
-                "diagnosis": e.diagnosis,
-                "status": e.status,
-                "owner": e.owner,
-            }
-        )
+        results.append({
+            "id": e.id, "filename": e.label,
+            "url": f"http://localhost:8000/dzi_data/{e.dzi_url}",
+            "roi": {"x": e.x, "y": e.y, "w": e.w, "h": e.h},
+            "diagnosis": e.diagnosis, "status": e.status, "owner": e.owner,
+        })
     return results
-
 
 @app.get("/extractions/{extraction_id}/details")
 def get_details(extraction_id: int, db: Session = Depends(database.get_db)):
-    ext = (
-        db.query(models.Extraction)
-        .filter(models.Extraction.id == extraction_id)
-        .first()
-    )
-    if not ext:
-        raise HTTPException(status_code=404, detail="Non trouvé")
-
+    ext = db.query(models.Extraction).filter(models.Extraction.id == extraction_id).first()
+    if not ext: raise HTTPException(status_code=404, detail="Non trouvé")
     return {
-        "id": ext.id,
-        "filename": ext.label,
-        "prelevement_type": ext.prelevement_type,
-        "prelevement_date": ext.prelevement_date,
-        "block_number": ext.block_number,
-        "fixation": ext.fixation,
-        "slide_count": ext.slide_count,
-        "staining": ext.staining,
-        "macro_obs": ext.macro_obs,
-        "micro_obs": ext.micro_obs,
-        "histo_type": ext.histo_type,
-        "sbr_grade": ext.sbr_grade,
-        "margins": ext.margins,
-        "hormonal_receptors": ext.hormonal_receptors,
-        "diagnosis": ext.diagnosis,
-        "comments": ext.comments,
-        "status": ext.status,
-        "pathologist": ext.pathologist,
-        "validation_date": ext.validation_date,
-        "drawings": [
-            {
-                "type": d.type,
-                "x": d.x,
-                "y": d.y,
-                "w": d.w,
-                "h": d.h,
-                "radius": d.radius,
-                "text": d.text,
-                "points": d.points,
-                "author": d.author,
-            }
-            for d in ext.drawings
-        ],
+        "id": ext.id, "filename": ext.label, "prelevement_type": ext.prelevement_type,
+        "prelevement_date": ext.prelevement_date, "block_number": ext.block_number,
+        "fixation": ext.fixation, "slide_count": ext.slide_count, "staining": ext.staining,
+        "macro_obs": ext.macro_obs, "micro_obs": ext.micro_obs, "histo_type": ext.histo_type,
+        "sbr_grade": ext.sbr_grade, "margins": ext.margins, "hormonal_receptors": ext.hormonal_receptors,
+        "diagnosis": ext.diagnosis, "comments": ext.comments, "status": ext.status,
+        "pathologist": ext.pathologist, "validation_date": ext.validation_date,
+        "drawings": [{"type": d.type, "x": d.x, "y": d.y, "w": d.w, "h": d.h, "radius": d.radius, "text": d.text, "points": d.points, "author": d.author} for d in ext.drawings],
     }
 
-
 @app.delete("/extractions/{extraction_id}")
-def delete_extraction(
-    extraction_id: int, username: str, db: Session = Depends(database.get_db)
-):
-    ext = (
-        db.query(models.Extraction)
-        .filter(models.Extraction.id == extraction_id)
-        .first()
-    )
-
-    if not ext:
-        raise HTTPException(status_code=404, detail="Introuvable")
-
-    if ext.owner != username:
-        raise HTTPException(
-            status_code=403,
-            detail="Vous ne pouvez supprimer que vos propres extractions",
-        )
-
-    # --- Suppression du gros fichier sur le Cloud MinIO ---
-    try:
-        print(f"🗑️ Suppression de l'extraction sur MinIO : {ext.dzi_url}")
-        minio_client.remove_object(BUCKET_NAME, ext.dzi_url)
-        print("✅ Fichier supprimé de MinIO avec succès !")
-    except Exception as minio_err:
-        print(f"⚠️ Erreur lors de la suppression sur MinIO : {minio_err}")
-
-    # --- Suppression du cache local sur ton PC/Serveur ---
+def delete_extraction(extraction_id: int, username: str, db: Session = Depends(database.get_db)):
+    ext = db.query(models.Extraction).filter(models.Extraction.id == extraction_id).first()
+    if not ext: raise HTTPException(status_code=404)
+    if ext.owner != username: raise HTTPException(status_code=403)
+    try: minio_client.remove_object(BUCKET_NAME, ext.dzi_url)
+    except Exception: pass
     try:
         file_path = os.path.join(DZI_FOLDER, ext.dzi_url)
         if os.path.exists(file_path):
             os.remove(file_path)
             files_dir = file_path.replace(".svs", "_files").replace(".dzi", "_files")
-            if os.path.exists(files_dir):
-                shutil.rmtree(files_dir)
-    except Exception as e:
-        print(f"Erreur suppression fichiers locaux: {e}")
-
-    # --- Suppression des métadonnées dans la base SQL ---
+            if os.path.exists(files_dir): shutil.rmtree(files_dir)
+    except: pass
     db.delete(ext)
     db.commit()
-
-    return {"message": "Extraction et fichiers cloud supprimés avec succès"}
+    return {"message": "Supprimé"}

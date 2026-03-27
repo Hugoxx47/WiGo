@@ -64,40 +64,48 @@ export default function Viewer() {
 
   // --- ÉTAT DU FORMULAIRE OLGA ---
   const [olgaFormSchema, setOlgaFormSchema] = useState<any>(null);
-  
+
   const [formData, setFormData] = useState<any>({
-      prelevementType: "fine",
-      prelevementDate: "",
-      blockNumber: "",
-      fixation: "formol",
-      slideCount: "",
-      staining: [],
-      macroObs: "",
-      microObs: "",
-      histoType: "canalaire",
-      sbrGrade: "1",
-      margins: "",
-      hormonalReceptors: "",
-      diagnosis: "benin",
-      comments: "",
-      status: "en_analyse",
-      pathologist: "",
-      validationDate: ""
+    prelevementType: "fine",
+    prelevementDate: "",
+    blockNumber: "",
+    fixation: "formol",
+    slideCount: "",
+    staining: [],
+    macroObs: "",
+    microObs: "",
+    histoType: "canalaire",
+    sbrGrade: "1",
+    margins: "",
+    hormonalReceptors: "",
+    diagnosis: "benin",
+    comments: "",
+    status: "en_analyse",
+    pathologist: "",
+    validationDate: "",
   });
-  
+
   const [labelInput, setLabelInput] = useState("Extraction");
+  const [selectedShapeIndex, setSelectedShapeIndex] = useState<number | null>(null);
 
   // Outils
   const [currentTool, setCurrentTool] = useState<ToolType>("move");
   const [shapes, setShapes] = useState<Shape[]>([]);
-  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(
+    null,
+  );
   const [currentDragShape, setCurrentDragShape] = useState<Shape | null>(null);
   const [movingShapeIndex, setMovingShapeIndex] = useState<number | null>(null);
   const [movingTextIndex, setMovingTextIndex] = useState<number | null>(null);
 
   const [polyPoints, setPolyPoints] = useState<{ x: number; y: number }[]>([]);
-  const [pendingTextPos, setPendingTextPos] = useState<{x: number; y: number;} | null>(null);
-  const [editingShapeIndex, setEditingShapeIndex] = useState<number | null>(null);
+  const [pendingTextPos, setPendingTextPos] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const [editingShapeIndex, setEditingShapeIndex] = useState<number | null>(
+    null,
+  );
   const [textValue, setTextValue] = useState("");
 
   const viewerRef = useRef<OpenSeadragon.Viewer | null>(null);
@@ -107,7 +115,7 @@ export default function Viewer() {
     const fetchOlgaForm = async () => {
       try {
         const response = await fetch(
-          "http://localhost:9091/forms/getFromID/a44b3f32-4e4c-4486-9705-6ca67a381c53"
+          "http://localhost:9091/forms/getFromID/a44b3f32-4e4c-4486-9705-6ca67a381c53",
         );
         const data = await response.json();
         setOlgaFormSchema(data);
@@ -213,19 +221,67 @@ export default function Viewer() {
 
   useEffect(() => {
     if (viewerRef.current) {
-      const canPan = currentTool === "move" && movingShapeIndex === null && movingTextIndex === null;
+      const canPan =
+        currentTool === "move" &&
+        movingShapeIndex === null &&
+        movingTextIndex === null;
       viewerRef.current.setMouseNavEnabled(canPan);
     }
   }, [currentTool, movingShapeIndex, movingTextIndex]);
 
-  const handleAiAnalysis = () => {
+  const handleAiAnalysis = async () => {
+    // 🎯 LOGIQUE INTELLIGENTE :
+    // 1. Si une forme est explicitement cliquée (sélectionnée), on la prend.
+    // 2. Sinon, on prend la TOUTE DERNIÈRE forme dessinée.
+    // 3. Sinon (aucune forme sur l'écran), on prend une zone arbitraire (pour éviter le crash).
+    
+    let targetShapeIndex = shapes.length > 0 ? shapes.length - 1 : -1;
+    if (selectedShapeIndex !== null && selectedShapeIndex < shapes.length) {
+        targetShapeIndex = selectedShapeIndex;
+    }
+
+    const shape = targetShapeIndex >= 0 ? shapes[targetShapeIndex] : { x: 5000, y: 5000, w: 1000, h: 1000 };
+
     setLoading(true);
-    setAiSuggestion(null);
-    setTimeout(() => {
-      setAiSuggestion("Le serveur n'a pas de réponse pour l'instant");
-      setShowSidebar(true);
+    setAiSuggestion(`L'IA InstanSeg analyse la zone sélectionnée...`);
+    setShowSidebar(true);
+
+    const baseUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+    const payload = {
+      filename: defaultDziFilename || "biopsie_cmu_1.dzi",
+      x: Math.round(shape.x || 0),
+      y: Math.round(shape.y || 0),
+      width: Math.round(shape.w || 1000),
+      height: Math.round(shape.h || 1000),
+      patient_folder: folderId,
+      patient_name: patientName,
+      annotation_label: labelInput,
+      extraction_id: extractionId,
+    };
+
+    try {
+      const response = await fetch(`${baseUrl}/analyze-ai`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setAiSuggestion(data.suggestion);
+      } else {
+        setAiSuggestion(
+          "❌ L'IA a rencontré une erreur (la zone est peut-être trop vaste pour la mémoire).",
+        );
+      }
+    } catch (error) {
+      setAiSuggestion(
+        "❌ Erreur de connexion avec le serveur d'Intelligence Artificielle.",
+      );
+    } finally {
       setLoading(false);
-    }, 1500);
+    }
   };
 
   const handleDownloadSnapshot = () => {
@@ -275,39 +331,53 @@ export default function Viewer() {
   };
 
   const getShapeBounds = (shape: Shape) => {
-      let minX = shape.x, maxX = shape.x, minY = shape.y, maxY = shape.y;
-      if (shape.type === 'rect') {
-          maxX = shape.x + (shape.w || 0);
-          maxY = shape.y + (shape.h || 0);
-      } else if (shape.type === 'circle') {
-          minX = shape.x - (shape.radius || 0);
-          maxX = shape.x + (shape.radius || 0);
-          minY = shape.y - (shape.radius || 0);
-          maxY = shape.y + (shape.radius || 0);
-      } else if (shape.type === 'polygon' && shape.points && shape.points.length > 0) {
-          minX = shape.points[0].x; maxX = shape.points[0].x;
-          minY = shape.points[0].y; maxY = shape.points[0].y;
-          shape.points.forEach(p => {
-              if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-              if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
-          });
-      }
-      const cx = minX + (maxX - minX) / 2;
-      const cy = minY + (maxY - minY) / 2;
-      return { minX, maxX, minY, maxY, cx, cy };
+    let minX = shape.x,
+      maxX = shape.x,
+      minY = shape.y,
+      maxY = shape.y;
+    if (shape.type === "rect") {
+      maxX = shape.x + (shape.w || 0);
+      maxY = shape.y + (shape.h || 0);
+    } else if (shape.type === "circle") {
+      minX = shape.x - (shape.radius || 0);
+      maxX = shape.x + (shape.radius || 0);
+      minY = shape.y - (shape.radius || 0);
+      maxY = shape.y + (shape.radius || 0);
+    } else if (
+      shape.type === "polygon" &&
+      shape.points &&
+      shape.points.length > 0
+    ) {
+      minX = shape.points[0].x;
+      maxX = shape.points[0].x;
+      minY = shape.points[0].y;
+      maxY = shape.points[0].y;
+      shape.points.forEach((p) => {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+      });
+    }
+    const cx = minX + (maxX - minX) / 2;
+    const cy = minY + (maxY - minY) / 2;
+    return { minX, maxX, minY, maxY, cx, cy };
   };
 
   const handleTextMouseDown = (e: React.MouseEvent, index: number) => {
-      if (currentTool !== 'move') return; 
-      if (shapes[index].author && shapes[index].author !== currentUser) return;
-      e.stopPropagation(); 
-      e.preventDefault();
-      setMovingTextIndex(index);
-      const { x, y } = getCoords(e);
-      setDragStart({ x, y });
+    if (currentTool !== "move") return;
+    if (shapes[index].author && shapes[index].author !== currentUser) return;
+    e.stopPropagation();
+    e.preventDefault();
+    setMovingTextIndex(index);
+    const { x, y } = getCoords(e);
+    setDragStart({ x, y });
   };
 
-  const handleShapeMouseDown = (e: React.MouseEvent, index: number) => {
+const handleShapeMouseDown = (e: React.MouseEvent, index: number) => {
+    // MAGIE : On mémorise la forme cliquée pour l'IA !
+    setSelectedShapeIndex(index);
+
     if (currentTool === "text") {
       e.stopPropagation();
       e.preventDefault();
@@ -320,9 +390,8 @@ export default function Viewer() {
     if (currentTool !== "move") return;
     if (shapes[index].author && shapes[index].author !== currentUser) return;
 
-    // MAGIE ICI : On autorise la sélection uniquement si c'est un texte libre
     if (shapes[index].type !== "text") {
-      return; // Les formes de fond ne peuvent plus être sélectionnées !
+      return; 
     }
 
     e.stopPropagation();
@@ -332,11 +401,16 @@ export default function Viewer() {
     setDragStart({ x, y });
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+const handleMouseDown = (e: React.MouseEvent) => {
     if (movingShapeIndex !== null || movingTextIndex !== null) return;
     if (!viewerRef.current) return;
     if (editingShapeIndex !== null) return;
-    if (currentTool === "move" || pendingTextPos) return;
+    
+    // Si on clique dans le vide avec l'outil de déplacement, on annule la sélection
+    if (currentTool === "move" && !pendingTextPos) {
+       setSelectedShapeIndex(null);
+       return;
+    }
 
     const { x, y } = getCoords(e);
 
@@ -350,6 +424,8 @@ export default function Viewer() {
       setPolyPoints((prev) => [...prev, { x, y }]);
       return;
     }
+    
+    // Si on commence à dessiner une nouvelle forme, on la présélectionnera plus tard
     setDragStart({ x, y });
     setCurrentDragShape({ type: currentTool, x, y, w: 0, h: 0 });
   };
@@ -360,73 +436,89 @@ export default function Viewer() {
 
     // --- DEPLACEMENT DES TEXTES LIES (AUTORISÉ) ---
     if (movingTextIndex !== null && viewerRef.current) {
-        const shape = shapes[movingTextIndex];
-        const pStart = viewerRef.current.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(dragStart.x, dragStart.y));
-        const pEnd = viewerRef.current.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(currentX, currentY));
-        const deltaX = pEnd.x - pStart.x;
-        const deltaY = pEnd.y - pStart.y;
-        
-        let newOffsetX = (shape.textOffsetX || 0) + deltaX;
-        let newOffsetY = (shape.textOffsetY || 0) + deltaY;
+      const shape = shapes[movingTextIndex];
+      const pStart = viewerRef.current.viewport.viewerElementToImageCoordinates(
+        new OpenSeadragon.Point(dragStart.x, dragStart.y),
+      );
+      const pEnd = viewerRef.current.viewport.viewerElementToImageCoordinates(
+        new OpenSeadragon.Point(currentX, currentY),
+      );
+      const deltaX = pEnd.x - pStart.x;
+      const deltaY = pEnd.y - pStart.y;
 
-        const { minX, maxX, minY, maxY, cx, cy } = getShapeBounds(shape);
-        const padding = 0.05; 
-        const pMinX = minX - padding; const pMaxX = maxX + padding;
-        const pMinY = minY - padding; const pMaxY = maxY + padding;
+      let newOffsetX = (shape.textOffsetX || 0) + deltaX;
+      let newOffsetY = (shape.textOffsetY || 0) + deltaY;
 
-        let absoluteTextX = cx + newOffsetX;
-        let absoluteTextY = cy + newOffsetY;
+      const { minX, maxX, minY, maxY, cx, cy } = getShapeBounds(shape);
+      const padding = 0.05;
+      const pMinX = minX - padding;
+      const pMaxX = maxX + padding;
+      const pMinY = minY - padding;
+      const pMaxY = maxY + padding;
 
-        if (absoluteTextX > pMinX && absoluteTextX < pMaxX && absoluteTextY > pMinY && absoluteTextY < pMaxY) {
-            const distLeft = absoluteTextX - pMinX;
-            const distRight = pMaxX - absoluteTextX;
-            const distTop = absoluteTextY - pMinY;
-            const distBottom = pMaxY - absoluteTextY;
+      let absoluteTextX = cx + newOffsetX;
+      let absoluteTextY = cy + newOffsetY;
 
-            const minDist = Math.min(distLeft, distRight, distTop, distBottom);
+      if (
+        absoluteTextX > pMinX &&
+        absoluteTextX < pMaxX &&
+        absoluteTextY > pMinY &&
+        absoluteTextY < pMaxY
+      ) {
+        const distLeft = absoluteTextX - pMinX;
+        const distRight = pMaxX - absoluteTextX;
+        const distTop = absoluteTextY - pMinY;
+        const distBottom = pMaxY - absoluteTextY;
 
-            if (minDist === distLeft) absoluteTextX = pMinX;
-            else if (minDist === distRight) absoluteTextX = pMaxX;
-            else if (minDist === distTop) absoluteTextY = pMinY;
-            else if (minDist === distBottom) absoluteTextY = pMaxY;
+        const minDist = Math.min(distLeft, distRight, distTop, distBottom);
 
-            newOffsetX = absoluteTextX - cx;
-            newOffsetY = absoluteTextY - cy;
-        }
+        if (minDist === distLeft) absoluteTextX = pMinX;
+        else if (minDist === distRight) absoluteTextX = pMaxX;
+        else if (minDist === distTop) absoluteTextY = pMinY;
+        else if (minDist === distBottom) absoluteTextY = pMaxY;
 
-        const newShapes = [...shapes];
-        newShapes[movingTextIndex] = { ...shape, textOffsetX: newOffsetX, textOffsetY: newOffsetY };
-        setShapes(newShapes);
-        setDragStart({x: currentX, y: currentY}); 
-        return;
+        newOffsetX = absoluteTextX - cx;
+        newOffsetY = absoluteTextY - cy;
+      }
+
+      const newShapes = [...shapes];
+      newShapes[movingTextIndex] = {
+        ...shape,
+        textOffsetX: newOffsetX,
+        textOffsetY: newOffsetY,
+      };
+      setShapes(newShapes);
+      setDragStart({ x: currentX, y: currentY });
+      return;
     }
 
     // --- DEPLACEMENT DES TEXTES LIBRES (AUTORISÉ) ---
     if (movingShapeIndex !== null && viewerRef.current) {
       const shape = shapes[movingShapeIndex];
-      
+
       // La sécurité est ici : on vérifie à nouveau que c'est bien un texte
       if (shape.type === "text") {
-          const pStart = viewerRef.current.viewport.viewerElementToImageCoordinates(
+        const pStart =
+          viewerRef.current.viewport.viewerElementToImageCoordinates(
             new OpenSeadragon.Point(dragStart.x, dragStart.y),
           );
-          const pEnd = viewerRef.current.viewport.viewerElementToImageCoordinates(
-            new OpenSeadragon.Point(currentX, currentY),
-          );
-          const deltaX = pEnd.x - pStart.x;
-          const deltaY = pEnd.y - pStart.y;
+        const pEnd = viewerRef.current.viewport.viewerElementToImageCoordinates(
+          new OpenSeadragon.Point(currentX, currentY),
+        );
+        const deltaX = pEnd.x - pStart.x;
+        const deltaY = pEnd.y - pStart.y;
 
-          const currentW = shape.w != null && shape.w !== 0 ? shape.w : shape.x;
-          const currentH = shape.h != null && shape.h !== 0 ? shape.h : shape.y;
-          
-          const newShapes = [...shapes];
-          newShapes[movingShapeIndex] = {
-            ...shape,
-            w: currentW + deltaX,
-            h: currentH + deltaY,
-          };
-          setShapes(newShapes);
-          setDragStart({ x: currentX, y: currentY });
+        const currentW = shape.w != null && shape.w !== 0 ? shape.w : shape.x;
+        const currentH = shape.h != null && shape.h !== 0 ? shape.h : shape.y;
+
+        const newShapes = [...shapes];
+        newShapes[movingShapeIndex] = {
+          ...shape,
+          w: currentW + deltaX,
+          h: currentH + deltaY,
+        };
+        setShapes(newShapes);
+        setDragStart({ x: currentX, y: currentY });
       }
       return;
     }
@@ -448,9 +540,17 @@ export default function Viewer() {
   };
 
   const handleMouseUp = () => {
-    if (movingShapeIndex !== null) { setMovingShapeIndex(null); setDragStart(null); return; }
-    if (movingTextIndex !== null) { setMovingTextIndex(null); setDragStart(null); return; }
-    
+    if (movingShapeIndex !== null) {
+      setMovingShapeIndex(null);
+      setDragStart(null);
+      return;
+    }
+    if (movingTextIndex !== null) {
+      setMovingTextIndex(null);
+      setDragStart(null);
+      return;
+    }
+
     if (currentTool === "polygon") return;
     if (!currentDragShape || !viewerRef.current) {
       setDragStart(null);
@@ -529,13 +629,13 @@ export default function Viewer() {
       if (textValue.trim() !== "") {
         newShapes[editingShapeIndex].text = textValue;
         if (newShapes[editingShapeIndex].textOffsetX === undefined) {
-            const { minY, cy } = getShapeBounds(newShapes[editingShapeIndex]);
-            newShapes[editingShapeIndex].textOffsetX = 0;
-            newShapes[editingShapeIndex].textOffsetY = (minY - cy) - 0.05; 
+          const { minY, cy } = getShapeBounds(newShapes[editingShapeIndex]);
+          newShapes[editingShapeIndex].textOffsetX = 0;
+          newShapes[editingShapeIndex].textOffsetY = minY - cy - 0.05;
         }
       } else {
         if (newShapes[editingShapeIndex].type === "text") {
-            newShapes.splice(editingShapeIndex, 1);
+          newShapes.splice(editingShapeIndex, 1);
         }
       }
       setShapes(newShapes);
@@ -550,7 +650,7 @@ export default function Viewer() {
         viewerRef.current.viewport.viewerElementToImageCoordinates(
           new OpenSeadragon.Point(pendingTextPos.x, pendingTextPos.y),
         );
-      
+
       const ptText = viewerRef.current.viewport.viewerElementToImageCoordinates(
         new OpenSeadragon.Point(pendingTextPos.x + 60, pendingTextPos.y - 60),
       );
@@ -584,30 +684,84 @@ export default function Viewer() {
     return shapes.map((shape, idx) => {
       if (shape.type === "text") return null;
 
-      const p1 = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x, shape.y));
-      const p2 = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x + (shape.w || 0), shape.y + (shape.h || 0)));
-      const sx = p1.x, sy = p1.y, sw = p2.x - p1.x, sh = p2.y - p1.y;
+      const p1 = viewerRef.current!.viewport.imageToViewerElementCoordinates(
+        new OpenSeadragon.Point(shape.x, shape.y),
+      );
+      const p2 = viewerRef.current!.viewport.imageToViewerElementCoordinates(
+        new OpenSeadragon.Point(
+          shape.x + (shape.w || 0),
+          shape.y + (shape.h || 0),
+        ),
+      );
+      const sx = p1.x,
+        sy = p1.y,
+        sw = p2.x - p1.x,
+        sh = p2.y - p1.y;
 
       const isMe = shape.author === currentUser;
       const strokeColor = isMe ? "#10b981" : "#f59e0b";
-      const fillColor = isMe ? "rgba(16, 185, 129, 0.3)" : "rgba(245, 158, 11, 0.3)";
-      
+      const fillColor = isMe
+        ? "rgba(16, 185, 129, 0.3)"
+        : "rgba(245, 158, 11, 0.3)";
+
       // MAGIE ICI : La forme garde le pointeur par défaut (elle ne semble plus cliquable)
       const cursorStyleShape = currentTool === "text" ? "crosshair" : "default";
 
       if (shape.type === "rect") {
-        return <rect key={`bg-${idx}`} x={sx} y={sy} width={sw} height={sh} fill={fillColor} stroke={strokeColor} strokeWidth="3" onMouseDown={(e) => handleShapeMouseDown(e, idx)} style={{ cursor: cursorStyleShape, pointerEvents: "auto" }} />;
+        return (
+          <rect
+            key={`bg-${idx}`}
+            x={sx}
+            y={sy}
+            width={sw}
+            height={sh}
+            fill={fillColor}
+            stroke={strokeColor}
+            strokeWidth="3"
+            onMouseDown={(e) => handleShapeMouseDown(e, idx)}
+            style={{ cursor: cursorStyleShape, pointerEvents: "auto" }}
+          />
+        );
       }
       if (shape.type === "circle") {
-        const pr = viewerRef.current!.viewport.deltaPixelsFromPoints(new OpenSeadragon.Point(shape.radius || 0, 0));
-        return <circle key={`bg-${idx}`} cx={sx} cy={sy} r={pr.x} fill={fillColor} stroke={strokeColor} strokeWidth="3" onMouseDown={(e) => handleShapeMouseDown(e, idx)} style={{ cursor: cursorStyleShape, pointerEvents: "auto" }} />;
+        const pr = viewerRef.current!.viewport.deltaPixelsFromPoints(
+          new OpenSeadragon.Point(shape.radius || 0, 0),
+        );
+        return (
+          <circle
+            key={`bg-${idx}`}
+            cx={sx}
+            cy={sy}
+            r={pr.x}
+            fill={fillColor}
+            stroke={strokeColor}
+            strokeWidth="3"
+            onMouseDown={(e) => handleShapeMouseDown(e, idx)}
+            style={{ cursor: cursorStyleShape, pointerEvents: "auto" }}
+          />
+        );
       }
       if (shape.type === "polygon" && shape.points) {
-        const pts = shape.points.map((pt) => {
-            const s = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(pt.x, pt.y));
+        const pts = shape.points
+          .map((pt) => {
+            const s =
+              viewerRef.current!.viewport.imageToViewerElementCoordinates(
+                new OpenSeadragon.Point(pt.x, pt.y),
+              );
             return `${s.x},${s.y}`;
-          }).join(" ");
-        return <polygon key={`bg-${idx}`} points={pts} fill={fillColor} stroke={strokeColor} strokeWidth="3" onMouseDown={(e) => handleShapeMouseDown(e, idx)} style={{ cursor: cursorStyleShape, pointerEvents: "auto" }} />;
+          })
+          .join(" ");
+        return (
+          <polygon
+            key={`bg-${idx}`}
+            points={pts}
+            fill={fillColor}
+            stroke={strokeColor}
+            strokeWidth="3"
+            onMouseDown={(e) => handleShapeMouseDown(e, idx)}
+            style={{ cursor: cursorStyleShape, pointerEvents: "auto" }}
+          />
+        );
       }
       return null;
     });
@@ -624,79 +778,203 @@ export default function Viewer() {
       if (shape.type === "text") {
         if (editingShapeIndex === idx || !showTexts || !shape.text) return null;
 
-        const pAnchor = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x, shape.y));
-        const isTextMoved = shape.w != null && shape.h != null && (shape.w !== 0 || shape.h !== 0);
+        const pAnchor =
+          viewerRef.current!.viewport.imageToViewerElementCoordinates(
+            new OpenSeadragon.Point(shape.x, shape.y),
+          );
+        const isTextMoved =
+          shape.w != null &&
+          shape.h != null &&
+          (shape.w !== 0 || shape.h !== 0);
         const tX = isTextMoved ? shape.w! : shape.x;
         const tY = isTextMoved ? shape.h! : shape.y;
-        const pText = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(tX, tY));
+        const pText =
+          viewerRef.current!.viewport.imageToViewerElementCoordinates(
+            new OpenSeadragon.Point(tX, tY),
+          );
 
         const textWidth = shape.text.length * 11 + 24;
 
         return (
           <g key={`fg-${idx}`}>
-            <line x1={pAnchor.x} y1={pAnchor.y} x2={pText.x} y2={pText.y} stroke={strokeColor} strokeWidth="2" strokeDasharray="4" style={{ pointerEvents: "none", opacity: 0.8 }} />
+            <line
+              x1={pAnchor.x}
+              y1={pAnchor.y}
+              x2={pText.x}
+              y2={pText.y}
+              stroke={strokeColor}
+              strokeWidth="2"
+              strokeDasharray="4"
+              style={{ pointerEvents: "none", opacity: 0.8 }}
+            />
             <circle cx={pAnchor.x} cy={pAnchor.y} r="4" fill={strokeColor} />
-            
-            <text x={pText.x} y={pText.y - 20} fill={strokeColor} fontSize="12" fontWeight="bold" textAnchor="middle" style={{ pointerEvents: "none", textShadow: "1px 1px 2px black" }}>{shape.author}</text>
-            
-            <rect x={pText.x - textWidth / 2} y={pText.y - 13} width={textWidth} height="26" fill="rgba(15, 23, 42, 0.8)" rx="6" style={{ pointerEvents: "none" }} />
-            
-            <text x={pText.x} y={pText.y} fill={textColor} fontSize="20" fontWeight="bold" textAnchor="middle" alignmentBaseline="middle" onMouseDown={(e) => handleShapeMouseDown(e, idx)} onDoubleClick={(e) => { e.stopPropagation(); startEditingText(idx); }} style={{ textShadow: "2px 2px 4px black", cursor: (isMe && currentTool === 'move') ? 'grab' : 'crosshair', pointerEvents: "auto", userSelect: "none" }}>{shape.text}</text>
+
+            <text
+              x={pText.x}
+              y={pText.y - 20}
+              fill={strokeColor}
+              fontSize="12"
+              fontWeight="bold"
+              textAnchor="middle"
+              style={{ pointerEvents: "none", textShadow: "1px 1px 2px black" }}
+            >
+              {shape.author}
+            </text>
+
+            <rect
+              x={pText.x - textWidth / 2}
+              y={pText.y - 13}
+              width={textWidth}
+              height="26"
+              fill="rgba(15, 23, 42, 0.8)"
+              rx="6"
+              style={{ pointerEvents: "none" }}
+            />
+
+            <text
+              x={pText.x}
+              y={pText.y}
+              fill={textColor}
+              fontSize="20"
+              fontWeight="bold"
+              textAnchor="middle"
+              alignmentBaseline="middle"
+              onMouseDown={(e) => handleShapeMouseDown(e, idx)}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                startEditingText(idx);
+              }}
+              style={{
+                textShadow: "2px 2px 4px black",
+                cursor: isMe && currentTool === "move" ? "grab" : "crosshair",
+                pointerEvents: "auto",
+                userSelect: "none",
+              }}
+            >
+              {shape.text}
+            </text>
           </g>
         );
       } else {
-         const p1 = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x, shape.y));
-         let authorX = p1.x, authorY = p1.y;
-         if (shape.type === 'circle') {
-           const pr = viewerRef.current!.viewport.deltaPixelsFromPoints(new OpenSeadragon.Point(shape.radius || 0, 0));
-           authorX -= pr.x; authorY -= pr.x;
-         } else if (shape.type === 'polygon' && shape.points && shape.points.length > 0) {
-           const sFirst = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.points[0].x, shape.points[0].y));
-           authorX = sFirst.x; authorY = sFirst.y;
-         }
-
-         const authorNode = (shape.author && showTexts) ? (
-            <text x={authorX} y={authorY - 5} fill={strokeColor} fontSize="14" fontWeight="bold" style={{ pointerEvents: "none", textShadow: "1px 1px 2px black" }}>{shape.author}</text>
-         ) : null;
-
-         let attachedNode = null;
-         if (showTexts && shape.text && editingShapeIndex !== idx) {
-             const { cx, cy, minY } = getShapeBounds(shape);
-
-             let offsetX = shape.textOffsetX;
-             let offsetY = shape.textOffsetY;
-
-             if (offsetX === undefined || offsetY === undefined) {
-                 offsetX = 0;
-                 offsetY = (minY - cy) - 0.05; 
-             }
-
-             const textImgX = cx + offsetX;
-             const textImgY = cy + offsetY;
-
-             const ptCenterScreen = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(cx, cy));
-             const ptTextScreen = viewerRef.current!.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(textImgX, textImgY));
-             
-             const textWidth = shape.text.length * 11 + 20; 
-             
-             attachedNode = (
-                 <g>
-                     <line x1={ptCenterScreen.x} y1={ptCenterScreen.y} x2={ptTextScreen.x} y2={ptTextScreen.y} stroke={textColor} strokeWidth="2" strokeDasharray="6,4" style={{ pointerEvents: 'none', opacity: 0.8 }} />
-                     <rect x={ptTextScreen.x - textWidth / 2} y={ptTextScreen.y - 15} width={textWidth} height="30" fill="rgba(15, 23, 42, 0.7)" rx="6" style={{ pointerEvents: 'none' }} />
-                     <text x={ptTextScreen.x} y={ptTextScreen.y} fill={textColor} fontSize="20" fontWeight="bold" textAnchor="middle" alignmentBaseline="middle" onMouseDown={(e) => handleTextMouseDown(e, idx)} onDoubleClick={(e) => { e.stopPropagation(); startEditingText(idx); }} style={{ cursor: (isMe && currentTool === 'move') ? 'grab' : 'pointer', pointerEvents: 'auto', userSelect: 'none' }}>{shape.text}</text>
-                 </g>
-             );
-         }
-
-         if (authorNode || attachedNode) {
-            return (
-              <g key={`fg-${idx}`}>
-                {authorNode}
-                {attachedNode}
-              </g>
+        const p1 = viewerRef.current!.viewport.imageToViewerElementCoordinates(
+          new OpenSeadragon.Point(shape.x, shape.y),
+        );
+        let authorX = p1.x,
+          authorY = p1.y;
+        if (shape.type === "circle") {
+          const pr = viewerRef.current!.viewport.deltaPixelsFromPoints(
+            new OpenSeadragon.Point(shape.radius || 0, 0),
+          );
+          authorX -= pr.x;
+          authorY -= pr.x;
+        } else if (
+          shape.type === "polygon" &&
+          shape.points &&
+          shape.points.length > 0
+        ) {
+          const sFirst =
+            viewerRef.current!.viewport.imageToViewerElementCoordinates(
+              new OpenSeadragon.Point(shape.points[0].x, shape.points[0].y),
             );
-         }
-         return null;
+          authorX = sFirst.x;
+          authorY = sFirst.y;
+        }
+
+        const authorNode =
+          shape.author && showTexts ? (
+            <text
+              x={authorX}
+              y={authorY - 5}
+              fill={strokeColor}
+              fontSize="14"
+              fontWeight="bold"
+              style={{ pointerEvents: "none", textShadow: "1px 1px 2px black" }}
+            >
+              {shape.author}
+            </text>
+          ) : null;
+
+        let attachedNode = null;
+        if (showTexts && shape.text && editingShapeIndex !== idx) {
+          const { cx, cy, minY } = getShapeBounds(shape);
+
+          let offsetX = shape.textOffsetX;
+          let offsetY = shape.textOffsetY;
+
+          if (offsetX === undefined || offsetY === undefined) {
+            offsetX = 0;
+            offsetY = minY - cy - 0.05;
+          }
+
+          const textImgX = cx + offsetX;
+          const textImgY = cy + offsetY;
+
+          const ptCenterScreen =
+            viewerRef.current!.viewport.imageToViewerElementCoordinates(
+              new OpenSeadragon.Point(cx, cy),
+            );
+          const ptTextScreen =
+            viewerRef.current!.viewport.imageToViewerElementCoordinates(
+              new OpenSeadragon.Point(textImgX, textImgY),
+            );
+
+          const textWidth = shape.text.length * 11 + 20;
+
+          attachedNode = (
+            <g>
+              <line
+                x1={ptCenterScreen.x}
+                y1={ptCenterScreen.y}
+                x2={ptTextScreen.x}
+                y2={ptTextScreen.y}
+                stroke={textColor}
+                strokeWidth="2"
+                strokeDasharray="6,4"
+                style={{ pointerEvents: "none", opacity: 0.8 }}
+              />
+              <rect
+                x={ptTextScreen.x - textWidth / 2}
+                y={ptTextScreen.y - 15}
+                width={textWidth}
+                height="30"
+                fill="rgba(15, 23, 42, 0.7)"
+                rx="6"
+                style={{ pointerEvents: "none" }}
+              />
+              <text
+                x={ptTextScreen.x}
+                y={ptTextScreen.y}
+                fill={textColor}
+                fontSize="20"
+                fontWeight="bold"
+                textAnchor="middle"
+                alignmentBaseline="middle"
+                onMouseDown={(e) => handleTextMouseDown(e, idx)}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  startEditingText(idx);
+                }}
+                style={{
+                  cursor: isMe && currentTool === "move" ? "grab" : "pointer",
+                  pointerEvents: "auto",
+                  userSelect: "none",
+                }}
+              >
+                {shape.text}
+              </text>
+            </g>
+          );
+        }
+
+        if (authorNode || attachedNode) {
+          return (
+            <g key={`fg-${idx}`}>
+              {authorNode}
+              {attachedNode}
+            </g>
+          );
+        }
+        return null;
       }
     });
   };
@@ -711,28 +989,28 @@ export default function Viewer() {
           if (data.drawings) {
             setShapes(data.drawings);
           }
-          if(data) {
-             setFormData({
-                 ...formData,
-                 prelevementType: data.prelevement_type || "fine",
-                 prelevementDate: data.prelevement_date || "",
-                 blockNumber: data.block_number || "",
-                 fixation: data.fixation || "formol",
-                 slideCount: data.slide_count ? data.slide_count.toString() : "",
-                 staining: data.staining || [],
-                 macroObs: data.macro_obs || "",
-                 microObs: data.micro_obs || "",
-                 histoType: data.histo_type || "canalaire",
-                 sbrGrade: data.sbr_grade || "1",
-                 margins: data.margins || "",
-                 hormonalReceptors: data.hormonal_receptors || "",
-                 diagnosis: data.diagnosis || "benin",
-                 comments: data.comments || "",
-                 status: data.status || "en_analyse",
-                 pathologist: data.pathologist || "",
-                 validationDate: data.validation_date || "",
-             });
-             setLabelInput(data.filename || "Extraction");
+          if (data) {
+            setFormData({
+              ...formData,
+              prelevementType: data.prelevement_type || "fine",
+              prelevementDate: data.prelevement_date || "",
+              blockNumber: data.block_number || "",
+              fixation: data.fixation || "formol",
+              slideCount: data.slide_count ? data.slide_count.toString() : "",
+              staining: data.staining || [],
+              macroObs: data.macro_obs || "",
+              microObs: data.micro_obs || "",
+              histoType: data.histo_type || "canalaire",
+              sbrGrade: data.sbr_grade || "1",
+              margins: data.margins || "",
+              hormonalReceptors: data.hormonal_receptors || "",
+              diagnosis: data.diagnosis || "benin",
+              comments: data.comments || "",
+              status: data.status || "en_analyse",
+              pathologist: data.pathologist || "",
+              validationDate: data.validation_date || "",
+            });
+            setLabelInput(data.filename || "Extraction");
           }
         })
         .catch((err) => console.error("Erreur chargement:", err))
@@ -783,11 +1061,17 @@ export default function Viewer() {
       drawings: shapes,
 
       prelevement_type: formData.prelevementType || "fine",
-      prelevement_date: formData.prelevementDate ? formData.prelevementDate : null,
+      prelevement_date: formData.prelevementDate
+        ? formData.prelevementDate
+        : null,
       block_number: formData.blockNumber || "",
       fixation: formData.fixation || "formol",
       slide_count: formData.slideCount ? parseInt(formData.slideCount) : null,
-      staining: Array.isArray(formData.staining) ? formData.staining : (formData.staining ? [formData.staining] : []),
+      staining: Array.isArray(formData.staining)
+        ? formData.staining
+        : formData.staining
+          ? [formData.staining]
+          : [],
       macro_obs: formData.macroObs || "",
       micro_obs: formData.microObs || "",
       histo_type: formData.histoType || "canalaire",
@@ -834,91 +1118,129 @@ export default function Viewer() {
 
   const renderOlgaForm = () => {
     if (!olgaFormSchema || !olgaFormSchema.form) {
-        return <div className="text-slate-400 text-sm p-4">Chargement du formulaire OLGA...</div>;
+      return (
+        <div className="text-slate-400 text-sm p-4">
+          Chargement du formulaire OLGA...
+        </div>
+      );
     }
 
     return olgaFormSchema.form.map((field: any, index: number) => {
-        const key = field.field_key;
-        if (!key) return null; 
-        
-        const optionsList = Array.isArray(field.field_options?.options) ? field.field_options.options : [];
-        const isMultiple = field.field_type === 'select' && (field.field_options?.source === 'Multiple Text Option' || field.field_options?.multiple === true || key === 'staining');
+      const key = field.field_key;
+      if (!key) return null;
 
-        const handleChange = (e: any) => {
-            let value = e.target.value;
-            if (e.target.type === 'select-multiple') {
-                value = Array.from(e.target.selectedOptions, (option: any) => option.value);
-            }
-            setFormData({ ...formData, [key]: value });
-        };
+      const optionsList = Array.isArray(field.field_options?.options)
+        ? field.field_options.options
+        : [];
+      const isMultiple =
+        field.field_type === "select" &&
+        (field.field_options?.source === "Multiple Text Option" ||
+          field.field_options?.multiple === true ||
+          key === "staining");
 
-        let currentValue = formData[key];
-        if (isMultiple) {
-            if (!Array.isArray(currentValue)) currentValue = currentValue ? [currentValue] : [];
-        } else {
-            if (Array.isArray(currentValue)) currentValue = currentValue.length > 0 ? currentValue[0] : "";
-            if (currentValue === undefined || currentValue === null) currentValue = "";
+      const handleChange = (e: any) => {
+        let value = e.target.value;
+        if (e.target.type === "select-multiple") {
+          value = Array.from(
+            e.target.selectedOptions,
+            (option: any) => option.value,
+          );
         }
+        setFormData({ ...formData, [key]: value });
+      };
 
-        switch (field.field_type) {
-            case "text":
-            case "number":
-            case "datepicker":
-                return (
-                    <div key={index} className="mb-4">
-                        <label className="block text-xs text-slate-400 mb-1 ml-1">{field.field_label || key}</label>
-                        <input
-                            type={field.field_type === 'datepicker' ? 'date' : field.field_type}
-                            value={currentValue}
-                            onChange={handleChange}
-                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-emerald-500 transition-colors"
-                        />
-                    </div>
-                );
-            case "textarea":
-                return (
-                    <div key={index} className="mb-4">
-                        <label className="block text-xs text-slate-400 mb-1 ml-1">{field.field_label || key}</label>
-                        <textarea
-                            rows={3}
-                            value={currentValue}
-                            onChange={handleChange}
-                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 transition-colors"
-                        />
-                    </div>
-                );
-            case "select":
-                return (
-                    <div key={index} className="mb-4">
-                        <label className="block text-xs text-slate-400 mb-1 ml-1">{field.field_label || key}</label>
-                        <select
-                            multiple={isMultiple}
-                            value={currentValue}
-                            onChange={handleChange}
-                            className={`w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500 transition-colors ${isMultiple ? 'h-24' : ''}`}
-                        >
-                            {!isMultiple && <option value="">Sélectionner...</option>}
-                            {optionsList.map((opt: any, optIdx: number) => {
-                                let optValue = "";
-                                let optLabel = "";
-                                if (typeof opt === 'object' && opt !== null) {
-                                    optValue = opt.value || opt.id || opt.option_id || opt.label || opt.name || String(opt);
-                                    optLabel = opt.label || opt.text || opt.name || opt.option_label || opt.value || String(opt);
-                                } else {
-                                    optValue = String(opt);
-                                    optLabel = String(opt);
-                                }
+      let currentValue = formData[key];
+      if (isMultiple) {
+        if (!Array.isArray(currentValue))
+          currentValue = currentValue ? [currentValue] : [];
+      } else {
+        if (Array.isArray(currentValue))
+          currentValue = currentValue.length > 0 ? currentValue[0] : "";
+        if (currentValue === undefined || currentValue === null)
+          currentValue = "";
+      }
 
-                                return (
-                                    <option key={optIdx} value={optValue}>{optLabel}</option>
-                                );
-                            })}
-                        </select>
-                    </div>
-                );
-            default:
-                return null;
-        }
+      switch (field.field_type) {
+        case "text":
+        case "number":
+        case "datepicker":
+          return (
+            <div key={index} className="mb-4">
+              <label className="block text-xs text-slate-400 mb-1 ml-1">
+                {field.field_label || key}
+              </label>
+              <input
+                type={
+                  field.field_type === "datepicker" ? "date" : field.field_type
+                }
+                value={currentValue}
+                onChange={handleChange}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-emerald-500 transition-colors"
+              />
+            </div>
+          );
+        case "textarea":
+          return (
+            <div key={index} className="mb-4">
+              <label className="block text-xs text-slate-400 mb-1 ml-1">
+                {field.field_label || key}
+              </label>
+              <textarea
+                rows={3}
+                value={currentValue}
+                onChange={handleChange}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 transition-colors"
+              />
+            </div>
+          );
+        case "select":
+          return (
+            <div key={index} className="mb-4">
+              <label className="block text-xs text-slate-400 mb-1 ml-1">
+                {field.field_label || key}
+              </label>
+              <select
+                multiple={isMultiple}
+                value={currentValue}
+                onChange={handleChange}
+                className={`w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500 transition-colors ${isMultiple ? "h-24" : ""}`}
+              >
+                {!isMultiple && <option value="">Sélectionner...</option>}
+                {optionsList.map((opt: any, optIdx: number) => {
+                  let optValue = "";
+                  let optLabel = "";
+                  if (typeof opt === "object" && opt !== null) {
+                    optValue =
+                      opt.value ||
+                      opt.id ||
+                      opt.option_id ||
+                      opt.label ||
+                      opt.name ||
+                      String(opt);
+                    optLabel =
+                      opt.label ||
+                      opt.text ||
+                      opt.name ||
+                      opt.option_label ||
+                      opt.value ||
+                      String(opt);
+                  } else {
+                    optValue = String(opt);
+                    optLabel = String(opt);
+                  }
+
+                  return (
+                    <option key={optIdx} value={optValue}>
+                      {optLabel}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          );
+        default:
+          return null;
+      }
     });
   };
 
@@ -1007,14 +1329,22 @@ export default function Viewer() {
             (() => {
               const shape = shapes[editingShapeIndex];
               let pt;
-              
-              if (shape.type === 'text') {
-                  pt = viewerRef.current.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x, shape.y));
+
+              if (shape.type === "text") {
+                pt = viewerRef.current.viewport.imageToViewerElementCoordinates(
+                  new OpenSeadragon.Point(shape.x, shape.y),
+                );
               } else {
-                  const { cx, cy, minY } = getShapeBounds(shape);
-                  const offsetX = shape.textOffsetX !== undefined ? shape.textOffsetX : 0;
-                  const offsetY = shape.textOffsetY !== undefined ? shape.textOffsetY : (minY - cy) - 0.05;
-                  pt = viewerRef.current.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(cx + offsetX, cy + offsetY));
+                const { cx, cy, minY } = getShapeBounds(shape);
+                const offsetX =
+                  shape.textOffsetX !== undefined ? shape.textOffsetX : 0;
+                const offsetY =
+                  shape.textOffsetY !== undefined
+                    ? shape.textOffsetY
+                    : minY - cy - 0.05;
+                pt = viewerRef.current.viewport.imageToViewerElementCoordinates(
+                  new OpenSeadragon.Point(cx + offsetX, cy + offsetY),
+                );
               }
 
               return (
@@ -1223,30 +1553,29 @@ export default function Viewer() {
 
           <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
             {aiSuggestion && (
-              <div className="bg-slate-800 border border-slate-600 rounded-xl p-4 mb-2">
-                <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2 mb-2">
-                  <SmartToyIcon fontSize="small" /> Résultat IA
+              <div className="bg-slate-800 border-2 border-emerald-500/50 shadow-lg shadow-emerald-500/20 rounded-xl p-4 mb-6">
+                <h3 className="text-sm font-bold text-emerald-400 flex items-center gap-2 mb-3 uppercase tracking-wider">
+                  <SmartToyIcon fontSize="small" /> Analyse IA InstanSeg
                 </h3>
-                <p className="text-xs text-slate-400 font-mono italic">
+                <div className="text-sm text-emerald-50 font-mono bg-slate-950 p-4 rounded-lg border border-slate-700 whitespace-pre-wrap leading-relaxed">
                   {aiSuggestion}
-                </p>
+                </div>
               </div>
             )}
 
             <div className="mb-6 pb-4 border-b border-slate-800">
-                <label className="block text-xs font-bold text-emerald-400 uppercase tracking-widest mb-2 ml-1">
-                    Nom de l'extraction
-                </label>
-                <input
-                    type="text"
-                    value={labelInput}
-                    onChange={(e) => setLabelInput(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white font-bold text-emerald-300 focus:outline-none focus:border-emerald-500 transition-colors"
-                />
+              <label className="block text-xs font-bold text-emerald-400 uppercase tracking-widest mb-2 ml-1">
+                Nom de l'extraction
+              </label>
+              <input
+                type="text"
+                value={labelInput}
+                onChange={(e) => setLabelInput(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white font-bold text-emerald-300 focus:outline-none focus:border-emerald-500 transition-colors"
+              />
             </div>
 
             {renderOlgaForm()}
-
           </div>
 
           <div className="p-6 border-t border-slate-800 bg-slate-950 flex gap-3">

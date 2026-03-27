@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+python-multipart
+torch --index-url https://download.pytorch.org/whl/cpu
+Pillow
+numpy<2.0.0
+instanseg-torch @ git+https://github.com/instanseg/instanseg.git
