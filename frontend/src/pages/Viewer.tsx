@@ -1348,7 +1348,11 @@ export default function Viewer() {
 
           {/* Input Création Nouveau Texte */}
           {pendingTextPos && (
-            <div className="absolute bg-slate-800 p-2 rounded-lg shadow-xl border border-slate-600 flex gap-2 pointer-events-auto z-50" style={{ left: pendingTextPos.x, top: pendingTextPos.y }}>
+            <div 
+              className="absolute bg-slate-800 p-2 rounded-lg shadow-xl border border-slate-600 flex gap-2 pointer-events-auto z-50" 
+              style={{ left: pendingTextPos.x, top: pendingTextPos.y }}
+              onMouseDown={(e) => e.stopPropagation()} // 🌟 CORRECTION : Bloque le clic pour ne pas annuler le texte !
+            >
               <input autoFocus type="text" value={textValue} onChange={(e) => setTextValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && confirmText()} className="bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 outline-none" />
               <button onClick={confirmText} className="bg-emerald-600 text-white px-2 rounded"> OK </button>
             </div>
@@ -1371,7 +1375,11 @@ export default function Viewer() {
               }
 
               return (
-                <div className="absolute bg-slate-800 p-2 rounded-lg shadow-xl border border-blue-500 flex gap-2 pointer-events-auto z-50" style={{ left: pt.x - 50, top: pt.y - 20 }}>
+                <div 
+                  className="absolute bg-slate-800 p-2 rounded-lg shadow-xl border border-blue-500 flex gap-2 pointer-events-auto z-50" 
+                  style={{ left: pt.x - 50, top: pt.y - 20 }}
+                  onMouseDown={(e) => e.stopPropagation()} // 🌟 CORRECTION ICI AUSSI
+                >
                   <input autoFocus type="text" value={textValue} onChange={(e) => setTextValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && confirmText()} className="bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 outline-none" />
                   <button onClick={confirmText} className="bg-blue-600 text-white px-2 rounded"> MAJ </button>
                 </div>
