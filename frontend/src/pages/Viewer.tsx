@@ -19,6 +19,8 @@ import DescriptionIcon from "@mui/icons-material/Description";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
+import ZoomInIcon from "@mui/icons-material/ZoomIn";
+import ZoomOutIcon from "@mui/icons-material/ZoomOut";
 import PersonIcon from "@mui/icons-material/Person";
 
 type ToolType = "move" | "rect" | "circle" | "polygon" | "text";
@@ -206,7 +208,10 @@ export default function Viewer() {
           if (isAnnotationMode) {
             setTimeout(() => {
               const homeZoom = viewer.viewport.getZoom();
-              viewer.viewport.minZoomLevel = homeZoom;
+              const minZoom = Math.max(0.1, homeZoom * 0.35);
+              const maxZoom = Math.max(2.5, homeZoom * 8);
+              (viewer.viewport as any).minZoomLevel = minZoom;
+              (viewer.viewport as any).maxZoomLevel = maxZoom;
               viewer.addHandler("animation", () => {
                 const bounds = roiRect;
                 const current = viewer.viewport.getBounds();
@@ -419,6 +424,17 @@ export default function Viewer() {
     }
   };
 
+  const handleZoomBy = (factor: number) => {
+    if (!viewerRef.current) return;
+    const viewport = viewerRef.current.viewport;
+    const center = viewport.getCenter();
+    viewport.zoomBy(factor, center);
+    viewport.applyConstraints();
+  };
+
+  const handleZoomIn = () => handleZoomBy(1.15);
+  const handleZoomOut = () => handleZoomBy(0.85);
+
   const getCoords = (e: React.MouseEvent) => {
     const rect = document
       .getElementById("osd-container")!
@@ -621,10 +637,12 @@ export default function Viewer() {
     const p1 = viewerRef.current.viewport.viewerElementToImageCoordinates(
       new OpenSeadragon.Point(currentDragShape.x, currentDragShape.y),
     );
+    const eligibleW = currentDragShape.w ?? 0;
+    const eligibleH = currentDragShape.h ?? 0;
     const p2 = viewerRef.current.viewport.viewerElementToImageCoordinates(
       new OpenSeadragon.Point(
-        currentDragShape.x + currentDragShape.w,
-        currentDragShape.y + currentDragShape.h,
+        currentDragShape.x + eligibleW,
+        currentDragShape.y + eligibleH,
       ),
     );
     
@@ -1161,7 +1179,7 @@ export default function Viewer() {
       prelevement_date: formData.prelevementDate ? formData.prelevementDate : null,
       block_number: formData.blockNumber || "",
       fixation: formData.fixation || "formol",
-      slide_count: formData.slideCount ? parseInt(formData.slideCount) : null,
+      slide_count: formData.slideCount ? parseInt(String(formData.slideCount), 10) : null,
       staining: Array.isArray(formData.staining) ? formData.staining : (formData.staining ? [formData.staining] : []),
       macro_obs: formData.macroObs || "",
       micro_obs: formData.microObs || "",
@@ -1241,7 +1259,7 @@ export default function Viewer() {
               <label className="block text-xs text-slate-400 mb-1 ml-1">{field.field_label || key}</label>
               <input
                 type={field.field_type === "datepicker" ? "date" : field.field_type}
-                value={currentValue}
+                value={currentValue as string | number | readonly string[] | undefined}
                 onChange={handleChange}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-emerald-500 transition-colors"
               />
@@ -1253,7 +1271,7 @@ export default function Viewer() {
               <label className="block text-xs text-slate-400 mb-1 ml-1">{field.field_label || key}</label>
               <textarea
                 rows={3}
-                value={currentValue}
+                value={currentValue as string}
                 onChange={handleChange}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 transition-colors"
               />
@@ -1265,7 +1283,7 @@ export default function Viewer() {
               <label className="block text-xs text-slate-400 mb-1 ml-1">{field.field_label || key}</label>
               <select
                 multiple={isMultiple}
-                value={currentValue}
+                value={currentValue as string | number | readonly string[] | undefined}
                 onChange={handleChange}
                 className={`w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500 transition-colors ${isMultiple ? "h-24" : ""}`}
               >
@@ -1388,6 +1406,8 @@ export default function Viewer() {
 
           <div className="pointer-events-auto bg-slate-800/90 backdrop-blur-md border border-slate-600 rounded-2xl p-1.5 flex gap-2 shadow-2xl">
             <button onClick={() => setCurrentTool("move")} className={`p-3 rounded-xl transition-all ${currentTool === "move" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`} title="Déplacer"> <PanToolIcon /> </button>
+            <button onClick={handleZoomIn} className="p-3 rounded-xl transition-all text-slate-400 hover:text-white" title="Zoom +"> <ZoomInIcon /> </button>
+            <button onClick={handleZoomOut} className="p-3 rounded-xl transition-all text-slate-400 hover:text-white" title="Zoom -"> <ZoomOutIcon /> </button>
             <div className="w-px bg-white/10 mx-1 my-2"></div>
             <button onClick={() => setCurrentTool("rect")} className={`p-3 rounded-xl transition-all ${currentTool === "rect" ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-emerald-400"}`} title="Rectangle"> <CropSquareIcon /> </button>
             {isAnnotationMode && (
