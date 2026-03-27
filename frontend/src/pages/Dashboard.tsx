@@ -60,7 +60,6 @@ export default function Dashboard() {
   };
 
   useEffect(() => {    
-    // --- CORRECTION : ON A RETIRÉ LE /seed AUTOMATIQUE ICI ---
     fetchPatients();
   }, [username]);
 

@@ -156,11 +156,11 @@ async def analyze_image_with_ai(data: AnalysisPayload):
         safe_h = min(data.height, image.height - safe_y)
         
         # 🛑 SECURITÉ ANTI-CRASH 🛑
-        # L'IA est très gourmande. On empêche l'analyse si la zone est plus grande que 1500x1500px
         if safe_w > 1500 or safe_h > 1500:
              return {
                  "suggestion": "❌ Zone trop vaste. L'IA requiert un patch plus petit (zoom maximum). Dessinez un rectangle plus petit (max 1500x1500px).",
-                 "cell_count": 0
+                 "cell_count": 0,
+                 "contour_points": [],
              }
 
         print(f"📐 Extraction région {safe_w}x{safe_h}px...")
@@ -181,6 +181,21 @@ async def analyze_image_with_ai(data: AnalysisPayload):
             print(f"❌ Erreur InstanSeg : {e}")
             raise HTTPException(status_code=503, detail=f"Service InstanSeg indisponible : {str(e)}")
 
+        # 3.1 Récupération des points (Mode 'centroids' pour avoir 1 seul point par cellule !)
+        contour_points = []
+        try:
+            print(f"📍 Appel segment_points...")
+            contour_points = await instanseg_client.segment_points(
+                file_bytes=png_data,
+                model="brightfield_nuclei",
+                target="nuclei",
+                mode="centroids",  # <--- MAGIE: 'centroids' au lieu de 'polygon'
+            )
+            print(f"📍 Points reçus : {len(contour_points)} cellules")
+        except Exception as e:
+            print(f"⚠️ Impossible de récupérer les points InstanSeg : {e}")
+            contour_points = []
+
         # 4. 📊 ANALYSE MORPHOLOGIQUE DES RÉSULTATS
         instances = segment_result.instances
         cell_count = segment_result.instance_count
@@ -190,14 +205,12 @@ async def analyze_image_with_ai(data: AnalysisPayload):
             avg_size = int(np.mean(cell_areas))
             max_size = int(np.max(cell_areas))
             
-            # Évaluation du pléomorphisme (critère du Grade SBR)
             pleomorphism = "Faible (Noyaux réguliers)"
             if max_size > avg_size * 3:
                 pleomorphism = "Élevé (Atypies cytonucléaires marquées)"
             elif max_size > avg_size * 2:
                 pleomorphism = "Modéré"
 
-            # Densité (Cellules / Mégapixel)
             area_pixels = safe_w * safe_h
             density = round((cell_count / area_pixels) * 1000000)
 
@@ -212,8 +225,24 @@ async def analyze_image_with_ai(data: AnalysisPayload):
         else:
             result_message = "🔬 Bilan InstanSeg : Aucune structure nucléaire détectée dans cette zone."
 
-        print(f"✅ Résultat IA : {cell_count} cellules.")
-        return {"suggestion": result_message, "cell_count": cell_count}
+        print(f"✅ Résultat IA : {cell_count} cellules, {len(contour_points)} points générés.")
+        
+        # Sérialiser les points correctement
+        contour_points_dict = []
+        for blob in contour_points:
+            try:
+                contour_points_dict.append(blob.dict() if hasattr(blob, 'dict') else {
+                    "color": getattr(blob, 'color', '#00ff00'),
+                    "points": [{"x": p.x, "y": p.y} if hasattr(p, 'x') else p for p in getattr(blob, 'points', [])]
+                })
+            except Exception as e:
+                print(f"⚠️ Erreur sérialisation blob : {e}")
+        
+        return {
+            "suggestion": result_message,
+            "cell_count": cell_count,
+            "contour_points": contour_points_dict,
+        }
 
     except HTTPException:
         raise
