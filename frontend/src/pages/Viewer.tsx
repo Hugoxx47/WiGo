@@ -312,7 +312,7 @@ export default function Viewer() {
         ? shapes[targetShapeIndex]
         : { type: "rect" as ToolType, x: 5000, y: 5000, w: 1000, h: 1000 };
 
-    // --- CORRECTION CRUCIALE : Calculer le coin Haut-Gauche pour l'IA ---
+    // Calculer le coin Haut-Gauche pour l'IA ---
     const { minX, minY, maxX, maxY } = getShapeBounds(shape);
     const cropX = Math.round(minX);
     const cropY = Math.round(minY);
