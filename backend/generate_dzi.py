@@ -1,50 +1,20 @@
 import os
 import shutil
 import pyvips
-from minio import Minio
-from minio.error import S3Error
 
 # --- CONFIGURATION ---
-MINIO_HOST = "minio:9000" 
-ACCESS_KEY = "minioadmin"
-SECRET_KEY = "minioadmin"
-BUCKET_NAME = "biopsie"
-SOURCE_FILE = "CMU-1.svs"
-
-LOCAL_INPUT_FILE = "temp_input.svs"
 OUTPUT_DIR = "dzi_data"
-OUTPUT_NAME = "biopsie_cmu_1"
 
-def download_from_minio():
-    print(f"📥 Connexion à MinIO ({MINIO_HOST})...")
-    try:
-        client = Minio(
-            MINIO_HOST,
-            access_key=ACCESS_KEY,
-            secret_key=SECRET_KEY,
-            secure=False
-        )
-        
-        try:
-            client.stat_object(BUCKET_NAME, SOURCE_FILE)
-        except S3Error as err:
-            if err.code == "NoSuchKey":
-                print(f"❌ Le fichier '{SOURCE_FILE}' n'existe pas dans le bucket '{BUCKET_NAME}'.")
-                return False
-            raise
-
-        print(f"⬇️ Téléchargement de {SOURCE_FILE}...")
-        client.fget_object(BUCKET_NAME, SOURCE_FILE, LOCAL_INPUT_FILE)
-        print("✅ Téléchargement terminé !")
-        return True
-
-    except Exception as e:
-        print(f"❌ Erreur MinIO critique : {e}")
-        return False
+# Liste des images à convertir (Fichier source, Nom de base de sortie)
+IMAGES_TO_PROCESS = [
+    ("CMU-1.svs", "biopsie_cmu_1"),
+    ("HE_example.tif", "biopsie_cmu_2"),          
+    ("CMU-2.svs", "biopsie_cmu_3") # 🌟 On a remplacé la fluo par CMU-2 !
+]
 
 def clean_directory(directory):
     """
-    Vide le contenu du dossier MAIS protège le dossier 'CMU-1' qui contient les extractions.
+    Vide le contenu du dossier MAIS protège les dossiers d'extractions.
     """
     if not os.path.exists(directory):
         os.makedirs(directory, exist_ok=True)
@@ -53,7 +23,7 @@ def clean_directory(directory):
     print(f"🧹 Nettoyage intelligent de {directory}...")
     for filename in os.listdir(directory):
         # --- PROTECTION ---
-        if filename == "CMU-1":
+        if filename in ["CMU-1", "CMU-2", "CASE-InstanSeg-HE"]:
             print(f"🛡️  Dossier protégé conservé : {filename}")
             continue
 
@@ -66,30 +36,24 @@ def clean_directory(directory):
         except Exception as e:
             print(f"⚠️ Impossible de supprimer {file_path}. Raison: {e}")
 
-def generate_dzi():
+def generate_all_dzi():
     print("--- DÉBUT DU TRAITEMENT ---")
-    
-    # 1. Nettoyage sécurisé
     clean_directory(OUTPUT_DIR)
 
-    # 2. Téléchargement
-    if not os.path.exists(LOCAL_INPUT_FILE):
-        if not download_from_minio():
-            return
-    else:
-        print("ℹ️ Fichier source déjà présent localement, on l'utilise.")
+    for source_file, output_name in IMAGES_TO_PROCESS:
+        if not os.path.exists(source_file):
+            print(f"⚠️ Fichier source introuvable, on le saute : {source_file}")
+            continue
 
-    # 3. Conversion
-    output_path = os.path.join(OUTPUT_DIR, OUTPUT_NAME)
-    print(f"🚀 Conversion avec PyVips...")
-    
-    try:
-        image = pyvips.Image.new_from_file(LOCAL_INPUT_FILE, access="sequential")
-        image.dzsave(output_path, tile_size=256, overlap=1)
-        print("✅ SUCCÈS TOTAL ! Tuiles générées dans 'dzi_data/'.")
+        output_path = os.path.join(OUTPUT_DIR, output_name)
+        print(f"🚀 Conversion de {source_file} avec PyVips...")
         
-    except Exception as e:
-        print(f"❌ Erreur PyVips : {e}")
+        try:
+            image = pyvips.Image.new_from_file(source_file, access="sequential")
+            image.dzsave(output_path, tile_size=256, overlap=1)
+            print(f"✅ {output_name}.dzi généré avec succès !")
+        except Exception as e:
+            print(f"❌ Erreur PyVips sur {source_file}: {e}")
 
 if __name__ == "__main__":
-    generate_dzi()
+    generate_all_dzi()

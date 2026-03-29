@@ -119,12 +119,57 @@ class AnalysisPayload(BaseModel):
     validation_date: Optional[str] = ""
     drawings: List[DrawingSchema] = []
 
+
+# --- CREATION DES 3 PATIENTS ---
+@app.post("/seed")
+def seed_database(db: Session = Depends(database.get_db)):
+    try:
+        models.Base.metadata.drop_all(bind=database.engine)
+        models.Base.metadata.create_all(bind=database.engine)
+        
+        patients_data = [
+            {
+                "name": "Jean Dupont", "age": 65, "folder": "CMU-1", 
+                "birth": "1958-05-12", "family": "Non", "med": "Hypertension",
+                "dzi_filename": "biopsie_cmu_1.dzi"
+            },
+            {
+                "name": "Marie Curie", "age": 58, "folder": "CASE-InstanSeg-HE", 
+                "birth": "1965-11-07", "family": "Oui", "med": "Suivi annuel",
+                "dzi_filename": "biopsie_cmu_2.dzi"
+            },
+            {
+                "name": "Paul Martin", "age": 42, "folder": "CMU-2",  # 🌟 Changé !
+                "birth": "1982-02-23", "family": "Non", "med": "RAS",
+                "dzi_filename": "biopsie_cmu_3.dzi" # 🌟 Le nouveau nom !
+            }
+        ]
+        
+        count = 0
+        for p in patients_data:
+            patient = models.Patient(
+                name=p["name"], age=p["age"], folder_id=p["folder"],
+                birth_date=p["birth"], family_history=p["family"], medical_history=p["med"]
+            )
+            db.add(patient)
+            db.commit()
+            db.refresh(patient)
+            
+            biopsy = models.Biopsy(patient_id=patient.id, image_url=p["dzi_filename"], status="Non analysé")
+            db.add(biopsy)
+            count += 1
+            
+        db.commit()
+        return {"message": f"Succès ! BDD Réinitialisée avec {count} patients."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
 # --- ROUTE HEALTH CHECK ---
 @app.get("/health")
 async def health_check():
-    """Vérife la santé de tous les services"""
+    """Vérifie la santé de tous les services"""
     try:
-        # Vérifier InstanSeg
         instanseg_health = await instanseg_client.health()
         return {
             "status": "ok",
@@ -143,19 +188,27 @@ async def health_check():
 # --- ROUTE IA : ANALYSE INSTANSEG ---
 @app.post("/analyze-ai")
 async def analyze_image_with_ai(data: AnalysisPayload):
-    source_path = "/app/CMU-1.svs"
+    # 🎯 Trouver la BONNE image source selon le patient !
+    if data.patient_folder == "CMU-1":
+        source_name = "CMU-1.svs"
+    elif data.patient_folder == "CASE-InstanSeg-HE":
+        source_name = "HE_example.tif"
+    elif data.patient_folder == "CMU-2": # 🌟 Changé !
+        source_name = "CMU-2.svs"
+    else:
+        source_name = "CMU-1.svs" # Fallback
+
+    source_path = f"/app/{source_name}"
     if not os.path.exists(source_path):
-        raise HTTPException(status_code=404, detail="Image source introuvable.")
+        raise HTTPException(status_code=404, detail=f"Image source introuvable: {source_name}")
 
     try:
-        # 1. Extraction de la zone dessinée par le médecin
         image = pyvips.Image.new_from_file(source_path, access="sequential")
         safe_x = max(0, min(data.x, image.width))
         safe_y = max(0, min(data.y, image.height))
         safe_w = min(data.width, image.width - safe_x)
         safe_h = min(data.height, image.height - safe_y)
         
-        # 🛑 SECURITÉ ANTI-CRASH 🛑
         if safe_w > 1500 or safe_h > 1500:
              return {
                  "suggestion": "❌ Zone trop vaste. L'IA requiert un patch plus petit (zoom maximum). Dessinez un rectangle plus petit (max 1500x1500px).",
@@ -166,10 +219,8 @@ async def analyze_image_with_ai(data: AnalysisPayload):
         print(f"📐 Extraction région {safe_w}x{safe_h}px...")
         region = image.extract_area(safe_x, safe_y, safe_w, safe_h)
 
-        # 2. Conversion en PNG bytes pour le service InstanSeg
         png_data = region.write_to_buffer(".png")
         
-        # 3. 🧠 APPEL AU SERVICE INSTANSEG
         print(f"🧠 Analyse InstanSeg en cours ({safe_w}x{safe_h} pixels)...")
         try:
             segment_result = await instanseg_client.segment(
@@ -181,22 +232,20 @@ async def analyze_image_with_ai(data: AnalysisPayload):
             print(f"❌ Erreur InstanSeg : {e}")
             raise HTTPException(status_code=503, detail=f"Service InstanSeg indisponible : {str(e)}")
 
-        # 3.1 Récupération des points (Mode 'centroids' pour avoir 1 seul point par cellule !)
         contour_points = []
         try:
-            print(f"📍 Appel segment_points (mode polygon)...")
+            print(f"📍 Appel segment_points (mode centroids)...")
             contour_points = await instanseg_client.segment_points(
                 file_bytes=png_data,
                 model="brightfield_nuclei",
                 target="nuclei",
-                mode="polygon",  # on récupère des contours plutôt que des centroides
+                mode="centroids",  
             )
             print(f"📍 Contours reçus : {len(contour_points)} entités")
         except Exception as e:
             print(f"⚠️ Impossible de récupérer les contours InstanSeg : {e}")
             contour_points = []
 
-        # 4. 📊 ANALYSE MORPHOLOGIQUE DES RÉSULTATS
         instances = segment_result.instances
         cell_count = segment_result.instance_count
 
@@ -227,7 +276,6 @@ async def analyze_image_with_ai(data: AnalysisPayload):
 
         print(f"✅ Résultat IA : {cell_count} cellules, {len(contour_points)} points générés.")
         
-        # Sérialiser les points correctement
         contour_points_dict = []
         for blob in contour_points:
             try:
@@ -274,7 +322,16 @@ def extract_roi(data: AnalysisPayload, db: Session = Depends(database.get_db)):
     filename_str = f"extraction_{int(time.time())}.svs"
     output_path = os.path.join(patient_dir, filename_str)
 
-    source_minio_name = "CMU-1.svs"
+    # 🎯 CORRECTION : Trouver la BONNE image source selon le patient !
+    if data.patient_folder == "CMU-1":
+        source_minio_name = "CMU-1.svs"
+    elif data.patient_folder == "CASE-InstanSeg-HE":
+        source_minio_name = "HE_example.tif"
+    elif data.patient_folder == "CMU-2": # 🌟 Changé !
+        source_minio_name = "CMU-2.svs"
+    else:
+        source_minio_name = "CMU-1.svs"
+
     source_path = f"/app/{source_minio_name}"
 
     if not os.path.exists(source_path):
