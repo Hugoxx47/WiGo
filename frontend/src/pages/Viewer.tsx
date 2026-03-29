@@ -208,10 +208,14 @@ export default function Viewer() {
           if (isAnnotationMode) {
             setTimeout(() => {
               const homeZoom = viewer.viewport.getZoom();
-              const minZoom = Math.max(0.1, homeZoom * 0.35);
+
+              // 🌟 CORRECTION ICI : Le dézoom minimum est strictement bloqué sur la vue de l'extraction
+              const minZoom = homeZoom;
               const maxZoom = Math.max(2.5, homeZoom * 8);
+
               (viewer.viewport as any).minZoomLevel = minZoom;
               (viewer.viewport as any).maxZoomLevel = maxZoom;
+
               viewer.addHandler("animation", () => {
                 const bounds = roiRect;
                 const current = viewer.viewport.getBounds();
@@ -316,13 +320,19 @@ export default function Viewer() {
     const { minX, minY, maxX, maxY } = getShapeBounds(shape);
     const cropX = Math.round(minX);
     const cropY = Math.round(minY);
-    const cropW = Math.round(shape.type === "rect" ? shape.w || 1000 : maxX - minX);
-    const cropH = Math.round(shape.type === "rect" ? shape.h || 1000 : maxY - minY);
+    const cropW = Math.round(
+      shape.type === "rect" ? shape.w || 1000 : maxX - minX,
+    );
+    const cropH = Math.round(
+      shape.type === "rect" ? shape.h || 1000 : maxY - minY,
+    );
 
     if (cropW > 1500 || cropH > 1500) {
-        setAiSuggestion("❌ La zone est trop vaste. L'IA requiert un patch plus petit (max 1500x1500px).");
-        setShowSidebar(true);
-        return;
+      setAiSuggestion(
+        "❌ La zone est trop vaste. L'IA requiert un patch plus petit (max 1500x1500px).",
+      );
+      setShowSidebar(true);
+      return;
     }
 
     setLoading(true);
@@ -357,7 +367,9 @@ export default function Viewer() {
 
         // --- ON STOCKE LES POLYGONES AI AVEC DÉCALAGE (cropX et cropY) ---
         const contours = (data.contour_points || [])
-          .filter((blob) => Array.isArray(blob.points) && blob.points.length > 2)
+          .filter(
+            (blob) => Array.isArray(blob.points) && blob.points.length > 2,
+          )
           .map((blob) => ({
             color: blob.color || "#10b981",
             points: (blob.points || []).map((p) => ({
@@ -469,7 +481,7 @@ export default function Viewer() {
     if (shapes[index].author && shapes[index].author !== currentUser) return;
 
     if (shapes[index].type !== "text") {
-      return; 
+      return;
     }
 
     e.stopPropagation();
@@ -483,11 +495,11 @@ export default function Viewer() {
     if (movingShapeIndex !== null || movingTextIndex !== null) return;
     if (!viewerRef.current) return;
     if (editingShapeIndex !== null) return;
-    
+
     // Si on clique dans le vide avec l'outil de déplacement, on annule la sélection
     if (currentTool === "move" && !pendingTextPos) {
-       setSelectedShapeIndex(null);
-       return;
+      setSelectedShapeIndex(null);
+      return;
     }
 
     const { x, y } = getCoords(e);
@@ -502,7 +514,7 @@ export default function Viewer() {
       setPolyPoints((prev) => [...prev, { x, y }]);
       return;
     }
-    
+
     // Si on commence à dessiner une nouvelle forme, on la présélectionnera plus tard
     setDragStart({ x, y });
     setCurrentDragShape({ type: currentTool, x, y, w: 0, h: 0 });
@@ -645,7 +657,7 @@ export default function Viewer() {
         currentDragShape.y + eligibleH,
       ),
     );
-    
+
     const newShape: Shape = {
       type: currentTool,
       x: p1.x,
@@ -658,11 +670,14 @@ export default function Viewer() {
       author: currentUser,
     };
 
-    if (newShape.w && newShape.w > 5 || (newShape.radius && newShape.radius > 5)) {
+    if (
+      (newShape.w && newShape.w > 5) ||
+      (newShape.radius && newShape.radius > 5)
+    ) {
       setShapes((prev) => {
-          const next = [...prev, newShape];
-          setSelectedShapeIndex(next.length - 1);
-          return next;
+        const next = [...prev, newShape];
+        setSelectedShapeIndex(next.length - 1);
+        return next;
       });
       if (!isAnnotationMode) {
         setCurrentTool("move");
@@ -686,7 +701,9 @@ export default function Viewer() {
         return { x: pt.x, y: pt.y };
       });
       setShapes((prev) => {
-          const next = [...prev, {
+        const next = [
+          ...prev,
+          {
             type: "polygon" as ToolType,
             x: 0,
             y: 0,
@@ -694,9 +711,10 @@ export default function Viewer() {
             h: 0,
             points: imagePoints,
             author: currentUser,
-          }];
-          setSelectedShapeIndex(next.length - 1);
-          return next;
+          },
+        ];
+        setSelectedShapeIndex(next.length - 1);
+        return next;
       });
       setPolyPoints([]);
     }
@@ -871,10 +889,15 @@ export default function Viewer() {
           <polygon
             key={`ia-contour-${idx}`}
             points={pts}
-            fill={contour.color ? `${contour.color}33` : "rgba(16, 185, 129, 0.2)"}
+            fill={
+              contour.color ? `${contour.color}33` : "rgba(16, 185, 129, 0.2)"
+            }
             stroke={contour.color || "#10b981"}
             strokeWidth="1"
-            style={{ pointerEvents: "none", filter: "drop-shadow(0 0 3px rgba(0,0,0,0.5))" }}
+            style={{
+              pointerEvents: "none",
+              filter: "drop-shadow(0 0 3px rgba(0,0,0,0.5))",
+            }}
           />
         );
       } catch (e) {
@@ -1176,11 +1199,19 @@ export default function Viewer() {
       owner: currentUser,
       drawings: shapes,
       prelevement_type: formData.prelevementType || "fine",
-      prelevement_date: formData.prelevementDate ? formData.prelevementDate : null,
+      prelevement_date: formData.prelevementDate
+        ? formData.prelevementDate
+        : null,
       block_number: formData.blockNumber || "",
       fixation: formData.fixation || "formol",
-      slide_count: formData.slideCount ? parseInt(String(formData.slideCount), 10) : null,
-      staining: Array.isArray(formData.staining) ? formData.staining : (formData.staining ? [formData.staining] : []),
+      slide_count: formData.slideCount
+        ? parseInt(String(formData.slideCount), 10)
+        : null,
+      staining: Array.isArray(formData.staining)
+        ? formData.staining
+        : formData.staining
+          ? [formData.staining]
+          : [],
       macro_obs: formData.macroObs || "",
       micro_obs: formData.microObs || "",
       histo_type: formData.histoType || "canalaire",
@@ -1195,7 +1226,9 @@ export default function Viewer() {
     };
 
     try {
-      const url = isAnnotationMode ? `${baseUrl}/annotations/save` : `${baseUrl}/extract-roi`;
+      const url = isAnnotationMode
+        ? `${baseUrl}/annotations/save`
+        : `${baseUrl}/extract-roi`;
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1205,7 +1238,8 @@ export default function Viewer() {
 
       if (res.ok) {
         if (!isAnnotationMode) {
-          if (data && data.extraction_id) setNewExtractionId(data.extraction_id);
+          if (data && data.extraction_id)
+            setNewExtractionId(data.extraction_id);
           else if (data && data.id) setNewExtractionId(data.id);
           setShowSuccessModal(true);
         } else {
@@ -1224,30 +1258,47 @@ export default function Viewer() {
 
   const renderOlgaForm = () => {
     if (!olgaFormSchema || !olgaFormSchema.form) {
-      return ( <div className="text-slate-400 text-sm p-4"> Chargement du formulaire OLGA... </div> );
+      return (
+        <div className="text-slate-400 text-sm p-4">
+          {" "}
+          Chargement du formulaire OLGA...{" "}
+        </div>
+      );
     }
 
     return olgaFormSchema.form.map((field: any, index: number) => {
       const key = field.field_key;
       if (!key) return null;
 
-      const optionsList = Array.isArray(field.field_options?.options) ? field.field_options.options : [];
-      const isMultiple = field.field_type === "select" && (field.field_options?.source === "Multiple Text Option" || field.field_options?.multiple === true || key === "staining");
+      const optionsList = Array.isArray(field.field_options?.options)
+        ? field.field_options.options
+        : [];
+      const isMultiple =
+        field.field_type === "select" &&
+        (field.field_options?.source === "Multiple Text Option" ||
+          field.field_options?.multiple === true ||
+          key === "staining");
 
       const handleChange = (e: any) => {
         let value = e.target.value;
         if (e.target.type === "select-multiple") {
-          value = Array.from(e.target.selectedOptions, (option: any) => option.value);
+          value = Array.from(
+            e.target.selectedOptions,
+            (option: any) => option.value,
+          );
         }
         setFormData({ ...formData, [key]: value });
       };
 
       let currentValue = formData[key];
       if (isMultiple) {
-        if (!Array.isArray(currentValue)) currentValue = currentValue ? [currentValue] : [];
+        if (!Array.isArray(currentValue))
+          currentValue = currentValue ? [currentValue] : [];
       } else {
-        if (Array.isArray(currentValue)) currentValue = currentValue.length > 0 ? currentValue[0] : "";
-        if (currentValue === undefined || currentValue === null) currentValue = "";
+        if (Array.isArray(currentValue))
+          currentValue = currentValue.length > 0 ? currentValue[0] : "";
+        if (currentValue === undefined || currentValue === null)
+          currentValue = "";
       }
 
       switch (field.field_type) {
@@ -1256,10 +1307,20 @@ export default function Viewer() {
         case "datepicker":
           return (
             <div key={index} className="mb-4">
-              <label className="block text-xs text-slate-400 mb-1 ml-1">{field.field_label || key}</label>
+              <label className="block text-xs text-slate-400 mb-1 ml-1">
+                {field.field_label || key}
+              </label>
               <input
-                type={field.field_type === "datepicker" ? "date" : field.field_type}
-                value={currentValue as string | number | readonly string[] | undefined}
+                type={
+                  field.field_type === "datepicker" ? "date" : field.field_type
+                }
+                value={
+                  currentValue as
+                    | string
+                    | number
+                    | readonly string[]
+                    | undefined
+                }
                 onChange={handleChange}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-emerald-500 transition-colors"
               />
@@ -1268,7 +1329,9 @@ export default function Viewer() {
         case "textarea":
           return (
             <div key={index} className="mb-4">
-              <label className="block text-xs text-slate-400 mb-1 ml-1">{field.field_label || key}</label>
+              <label className="block text-xs text-slate-400 mb-1 ml-1">
+                {field.field_label || key}
+              </label>
               <textarea
                 rows={3}
                 value={currentValue as string}
@@ -1280,10 +1343,18 @@ export default function Viewer() {
         case "select":
           return (
             <div key={index} className="mb-4">
-              <label className="block text-xs text-slate-400 mb-1 ml-1">{field.field_label || key}</label>
+              <label className="block text-xs text-slate-400 mb-1 ml-1">
+                {field.field_label || key}
+              </label>
               <select
                 multiple={isMultiple}
-                value={currentValue as string | number | readonly string[] | undefined}
+                value={
+                  currentValue as
+                    | string
+                    | number
+                    | readonly string[]
+                    | undefined
+                }
                 onChange={handleChange}
                 className={`w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500 transition-colors ${isMultiple ? "h-24" : ""}`}
               >
@@ -1292,13 +1363,29 @@ export default function Viewer() {
                   let optValue = "";
                   let optLabel = "";
                   if (typeof opt === "object" && opt !== null) {
-                    optValue = opt.value || opt.id || opt.option_id || opt.label || opt.name || String(opt);
-                    optLabel = opt.label || opt.text || opt.name || opt.option_label || opt.value || String(opt);
+                    optValue =
+                      opt.value ||
+                      opt.id ||
+                      opt.option_id ||
+                      opt.label ||
+                      opt.name ||
+                      String(opt);
+                    optLabel =
+                      opt.label ||
+                      opt.text ||
+                      opt.name ||
+                      opt.option_label ||
+                      opt.value ||
+                      String(opt);
                   } else {
                     optValue = String(opt);
                     optLabel = String(opt);
                   }
-                  return ( <option key={optIdx} value={optValue}>{optLabel}</option> );
+                  return (
+                    <option key={optIdx} value={optValue}>
+                      {optLabel}
+                    </option>
+                  );
                 })}
               </select>
             </div>
@@ -1316,7 +1403,10 @@ export default function Viewer() {
         className="relative flex-grow h-full bg-black overflow-hidden"
         ref={containerRef}
       >
-        <div id="openseadragon-viewer" className="absolute inset-0 z-0 bg-black" />
+        <div
+          id="openseadragon-viewer"
+          className="absolute inset-0 z-0 bg-black"
+        />
 
         {/* Calque SVG */}
         <div
@@ -1336,25 +1426,58 @@ export default function Viewer() {
 
             {/* Formes en cours de dessin */}
             {currentDragShape && currentTool === "rect" && (
-              <rect x={currentDragShape.x} y={currentDragShape.y} width={currentDragShape.w} height={currentDragShape.h} fill="rgba(239, 68, 68, 0.3)" stroke="#ef4444" strokeWidth="2" />
+              <rect
+                x={currentDragShape.x}
+                y={currentDragShape.y}
+                width={currentDragShape.w}
+                height={currentDragShape.h}
+                fill="rgba(239, 68, 68, 0.3)"
+                stroke="#ef4444"
+                strokeWidth="2"
+              />
             )}
             {currentDragShape && currentTool === "circle" && (
-              <circle cx={currentDragShape.x} cy={currentDragShape.y} r={currentDragShape.radius} fill="rgba(239, 68, 68, 0.3)" stroke="#ef4444" strokeWidth="2" />
+              <circle
+                cx={currentDragShape.x}
+                cy={currentDragShape.y}
+                r={currentDragShape.radius}
+                fill="rgba(239, 68, 68, 0.3)"
+                stroke="#ef4444"
+                strokeWidth="2"
+              />
             )}
             {currentTool === "polygon" && (
-              <polyline points={polyPoints.map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke="#f59e0b" strokeWidth="2" />
+              <polyline
+                points={polyPoints.map((p) => `${p.x},${p.y}`).join(" ")}
+                fill="none"
+                stroke="#f59e0b"
+                strokeWidth="2"
+              />
             )}
           </svg>
 
           {/* Input Création Nouveau Texte */}
           {pendingTextPos && (
-            <div 
-              className="absolute bg-slate-800 p-2 rounded-lg shadow-xl border border-slate-600 flex gap-2 pointer-events-auto z-50" 
+            <div
+              className="absolute bg-slate-800 p-2 rounded-lg shadow-xl border border-slate-600 flex gap-2 pointer-events-auto z-50"
               style={{ left: pendingTextPos.x, top: pendingTextPos.y }}
               onMouseDown={(e) => e.stopPropagation()} // 🌟 CORRECTION : Bloque le clic pour ne pas annuler le texte !
             >
-              <input autoFocus type="text" value={textValue} onChange={(e) => setTextValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && confirmText()} className="bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 outline-none" />
-              <button onClick={confirmText} className="bg-emerald-600 text-white px-2 rounded"> OK </button>
+              <input
+                autoFocus
+                type="text"
+                value={textValue}
+                onChange={(e) => setTextValue(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && confirmText()}
+                className="bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 outline-none"
+              />
+              <button
+                onClick={confirmText}
+                className="bg-emerald-600 text-white px-2 rounded"
+              >
+                {" "}
+                OK{" "}
+              </button>
             </div>
           )}
 
@@ -1366,29 +1489,52 @@ export default function Viewer() {
               let pt;
 
               if (shape.type === "text") {
-                pt = viewerRef.current.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(shape.x, shape.y));
+                pt = viewerRef.current.viewport.imageToViewerElementCoordinates(
+                  new OpenSeadragon.Point(shape.x, shape.y),
+                );
               } else {
                 const { cx, cy, minY } = getShapeBounds(shape);
-                const offsetX = shape.textOffsetX !== undefined ? shape.textOffsetX : 0;
-                const offsetY = shape.textOffsetY !== undefined ? shape.textOffsetY : minY - cy - 0.05;
-                pt = viewerRef.current.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(cx + offsetX, cy + offsetY));
+                const offsetX =
+                  shape.textOffsetX !== undefined ? shape.textOffsetX : 0;
+                const offsetY =
+                  shape.textOffsetY !== undefined
+                    ? shape.textOffsetY
+                    : minY - cy - 0.05;
+                pt = viewerRef.current.viewport.imageToViewerElementCoordinates(
+                  new OpenSeadragon.Point(cx + offsetX, cy + offsetY),
+                );
               }
 
               return (
-                <div 
-                  className="absolute bg-slate-800 p-2 rounded-lg shadow-xl border border-blue-500 flex gap-2 pointer-events-auto z-50" 
+                <div
+                  className="absolute bg-slate-800 p-2 rounded-lg shadow-xl border border-blue-500 flex gap-2 pointer-events-auto z-50"
                   style={{ left: pt.x - 50, top: pt.y - 20 }}
                   onMouseDown={(e) => e.stopPropagation()} // 🌟 CORRECTION ICI AUSSI
                 >
-                  <input autoFocus type="text" value={textValue} onChange={(e) => setTextValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && confirmText()} className="bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 outline-none" />
-                  <button onClick={confirmText} className="bg-blue-600 text-white px-2 rounded"> MAJ </button>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={textValue}
+                    onChange={(e) => setTextValue(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && confirmText()}
+                    className="bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 outline-none"
+                  />
+                  <button
+                    onClick={confirmText}
+                    className="bg-blue-600 text-white px-2 rounded"
+                  >
+                    {" "}
+                    MAJ{" "}
+                  </button>
                 </div>
               );
             })()}
         </div>
 
         {/* LÉGENDE COLLABORATIVE */}
-        <div className={`absolute top-4 transition-all duration-300 ${showSidebar ? "right-[470px]" : "right-4"} bg-slate-900/90 backdrop-blur-md border border-slate-700 p-3 rounded-xl shadow-xl pointer-events-none z-20`}>
+        <div
+          className={`absolute top-4 transition-all duration-300 ${showSidebar ? "right-[470px]" : "right-4"} bg-slate-900/90 backdrop-blur-md border border-slate-700 p-3 rounded-xl shadow-xl pointer-events-none z-20`}
+        >
           <div className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-widest flex items-center gap-2">
             <PersonIcon fontSize="small" /> Collaboration
           </div>
@@ -1405,34 +1551,128 @@ export default function Viewer() {
         {/* BARRE D'OUTILS FLOTTANTE */}
         <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-20 pointer-events-none flex gap-4 ui-layer">
           <div className="pointer-events-auto bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-2xl p-2 flex items-center gap-4 shadow-2xl">
-            <button onClick={() => navigate("/dashboard")} className="p-2 hover:bg-white/10 rounded-xl transition-colors"> <ArrowBackIcon /> </button>
+            <button
+              onClick={() => navigate("/dashboard")}
+              className="p-2 hover:bg-white/10 rounded-xl transition-colors"
+            >
+              {" "}
+              <ArrowBackIcon />{" "}
+            </button>
             <div className="pr-4 border-r border-white/10">
               <h1 className="font-bold text-sm text-white">{patientName}</h1>
-              <div className="text-xs text-emerald-400 font-mono"> ID: {folderId} </div>
+              <div className="text-xs text-emerald-400 font-mono">
+                {" "}
+                ID: {folderId}{" "}
+              </div>
             </div>
           </div>
 
           <div className="pointer-events-auto bg-slate-800/90 backdrop-blur-md border border-slate-600 rounded-2xl p-1.5 flex gap-2 shadow-2xl">
-            <button onClick={() => setCurrentTool("move")} className={`p-3 rounded-xl transition-all ${currentTool === "move" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`} title="Déplacer"> <PanToolIcon /> </button>
-            <button onClick={handleZoomIn} className="p-3 rounded-xl transition-all text-slate-400 hover:text-white" title="Zoom +"> <ZoomInIcon /> </button>
-            <button onClick={handleZoomOut} className="p-3 rounded-xl transition-all text-slate-400 hover:text-white" title="Zoom -"> <ZoomOutIcon /> </button>
+            <button
+              onClick={() => setCurrentTool("move")}
+              className={`p-3 rounded-xl transition-all ${currentTool === "move" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`}
+              title="Déplacer"
+            >
+              {" "}
+              <PanToolIcon />{" "}
+            </button>
+            <button
+              onClick={handleZoomIn}
+              className="p-3 rounded-xl transition-all text-slate-400 hover:text-white"
+              title="Zoom +"
+            >
+              {" "}
+              <ZoomInIcon />{" "}
+            </button>
+            <button
+              onClick={handleZoomOut}
+              className="p-3 rounded-xl transition-all text-slate-400 hover:text-white"
+              title="Zoom -"
+            >
+              {" "}
+              <ZoomOutIcon />{" "}
+            </button>
             <div className="w-px bg-white/10 mx-1 my-2"></div>
-            <button onClick={() => setCurrentTool("rect")} className={`p-3 rounded-xl transition-all ${currentTool === "rect" ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-emerald-400"}`} title="Rectangle"> <CropSquareIcon /> </button>
+            <button
+              onClick={() => setCurrentTool("rect")}
+              className={`p-3 rounded-xl transition-all ${currentTool === "rect" ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-emerald-400"}`}
+              title="Rectangle"
+            >
+              {" "}
+              <CropSquareIcon />{" "}
+            </button>
             {isAnnotationMode && (
               <>
-                <button onClick={() => setCurrentTool("circle")} className={`p-3 rounded-xl transition-all ${currentTool === "circle" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-blue-400"}`} title="Cercle"> <RadioButtonUncheckedIcon /> </button>
-                <button onClick={() => { setCurrentTool("polygon"); setPolyPoints([]); }} className={`p-3 rounded-xl transition-all ${currentTool === "polygon" ? "bg-amber-600 text-white" : "text-slate-400 hover:text-amber-400"}`} title="Polygone"> <PolylineIcon /> </button>
-                <button onClick={() => { setCurrentTool("text"); setPendingTextPos(null); }} className={`p-3 rounded-xl transition-all ${currentTool === "text" ? "bg-yellow-600 text-white" : "text-slate-400 hover:text-yellow-400"}`} title="Texte isolé"> <TextFieldsIcon /> </button>
+                <button
+                  onClick={() => setCurrentTool("circle")}
+                  className={`p-3 rounded-xl transition-all ${currentTool === "circle" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-blue-400"}`}
+                  title="Cercle"
+                >
+                  {" "}
+                  <RadioButtonUncheckedIcon />{" "}
+                </button>
+                <button
+                  onClick={() => {
+                    setCurrentTool("polygon");
+                    setPolyPoints([]);
+                  }}
+                  className={`p-3 rounded-xl transition-all ${currentTool === "polygon" ? "bg-amber-600 text-white" : "text-slate-400 hover:text-amber-400"}`}
+                  title="Polygone"
+                >
+                  {" "}
+                  <PolylineIcon />{" "}
+                </button>
+                <button
+                  onClick={() => {
+                    setCurrentTool("text");
+                    setPendingTextPos(null);
+                  }}
+                  className={`p-3 rounded-xl transition-all ${currentTool === "text" ? "bg-yellow-600 text-white" : "text-slate-400 hover:text-yellow-400"}`}
+                  title="Texte isolé"
+                >
+                  {" "}
+                  <TextFieldsIcon />{" "}
+                </button>
                 <div className="w-px bg-white/10 mx-1 my-2"></div>
-                <button onClick={() => setShowTexts(!showTexts)} className={`p-3 rounded-xl transition-all ${!showTexts ? "bg-red-500/20 text-red-400" : "text-slate-400 hover:text-white"}`} title="Masquer les textes"> {showTexts ? <VisibilityIcon /> : <VisibilityOffIcon />} </button>
+                <button
+                  onClick={() => setShowTexts(!showTexts)}
+                  className={`p-3 rounded-xl transition-all ${!showTexts ? "bg-red-500/20 text-red-400" : "text-slate-400 hover:text-white"}`}
+                  title="Masquer les textes"
+                >
+                  {" "}
+                  {showTexts ? <VisibilityIcon /> : <VisibilityOffIcon />}{" "}
+                </button>
               </>
             )}
           </div>
 
           <div className="pointer-events-auto flex gap-3">
-            <button onClick={handleDownloadSnapshot} className="p-3 bg-slate-800/90 backdrop-blur-md text-white border border-slate-600 rounded-2xl hover:bg-indigo-600 transition-all shadow-lg"> <CameraAltIcon /> </button>
-            {shapes.length > 0 && <button onClick={handleUndo} className="p-3 bg-slate-700/80 backdrop-blur-md text-white border border-slate-500 rounded-2xl hover:bg-slate-600 transition-all shadow-lg" title="Annuler dernier"> <UndoIcon /> </button>}
-            {shapes.length > 0 && <button onClick={handleDeleteAll} className="p-3 bg-red-500/20 text-red-400 border border-red-500/50 rounded-2xl hover:bg-red-500 hover:text-white"> <DeleteForeverIcon /> </button>}
+            <button
+              onClick={handleDownloadSnapshot}
+              className="p-3 bg-slate-800/90 backdrop-blur-md text-white border border-slate-600 rounded-2xl hover:bg-indigo-600 transition-all shadow-lg"
+            >
+              {" "}
+              <CameraAltIcon />{" "}
+            </button>
+            {shapes.length > 0 && (
+              <button
+                onClick={handleUndo}
+                className="p-3 bg-slate-700/80 backdrop-blur-md text-white border border-slate-500 rounded-2xl hover:bg-slate-600 transition-all shadow-lg"
+                title="Annuler dernier"
+              >
+                {" "}
+                <UndoIcon />{" "}
+              </button>
+            )}
+            {shapes.length > 0 && (
+              <button
+                onClick={handleDeleteAll}
+                className="p-3 bg-red-500/20 text-red-400 border border-red-500/50 rounded-2xl hover:bg-red-500 hover:text-white"
+              >
+                {" "}
+                <DeleteForeverIcon />{" "}
+              </button>
+            )}
 
             {isAnnotationMode && (
               <>
@@ -1442,13 +1682,20 @@ export default function Viewer() {
                   className={`px-4 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-xl transition-all ${loading ? "bg-slate-600 text-slate-300 cursor-not-allowed" : "bg-indigo-600 text-white hover:bg-indigo-500"}`}
                   title="Lance ou relance l'analyse InstanSeg"
                 >
-                  <SmartToyIcon /> {loading ? "Analyse..." : aiSuggestion ? "Relancer IA" : "Lancer IA"}
+                  <SmartToyIcon />{" "}
+                  {loading
+                    ? "Analyse..."
+                    : aiSuggestion
+                      ? "Relancer IA"
+                      : "Lancer IA"}
                 </button>
                 {aiSuggestion && (
                   <button
                     onClick={() => setShowAiPoints(!showAiPoints)}
                     className={`p-3 rounded-2xl border transition-all shadow-lg ${showAiPoints ? "bg-slate-800/90 text-cyan-400 border-slate-600 hover:bg-slate-700" : "bg-slate-700/50 text-slate-400 border-slate-600 hover:bg-slate-600"}`}
-                    title={showAiPoints ? "Cacher points IA" : "Afficher points IA"}
+                    title={
+                      showAiPoints ? "Cacher points IA" : "Afficher points IA"
+                    }
                   >
                     {showAiPoints ? <VisibilityIcon /> : <VisibilityOffIcon />}
                   </button>
@@ -1456,7 +1703,10 @@ export default function Viewer() {
               </>
             )}
 
-            <button onClick={() => setShowSidebar(!showSidebar)} className={`px-4 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-xl transition-all ${showSidebar ? "bg-slate-700 text-slate-300" : "bg-emerald-600 text-white"}`}>
+            <button
+              onClick={() => setShowSidebar(!showSidebar)}
+              className={`px-4 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-xl transition-all ${showSidebar ? "bg-slate-700 text-slate-300" : "bg-emerald-600 text-white"}`}
+            >
               <DescriptionIcon /> {showSidebar ? "Masquer" : "Rapport"}
             </button>
           </div>
@@ -1466,13 +1716,34 @@ export default function Viewer() {
       {showSuccessModal && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-300">
           <div className="bg-slate-900 border border-slate-700 p-8 rounded-3xl shadow-2xl max-w-md w-full text-center relative">
-            <div className="w-16 h-16 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-6 text-emerald-400"> <CheckCircleIcon style={{ fontSize: 40 }} /> </div>
-            <h2 className="text-2xl font-bold text-white mb-2"> Extraction Créée ! </h2>
-            <p className="text-slate-400 mb-8"> L'analyse a été enregistrée avec succès. </p>
+            <div className="w-16 h-16 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-6 text-emerald-400">
+              {" "}
+              <CheckCircleIcon style={{ fontSize: 40 }} />{" "}
+            </div>
+            <h2 className="text-2xl font-bold text-white mb-2">
+              {" "}
+              Extraction Créée !{" "}
+            </h2>
+            <p className="text-slate-400 mb-8">
+              {" "}
+              L'analyse a été enregistrée avec succès.{" "}
+            </p>
 
             <div className="flex flex-col gap-3">
-              <button onClick={handleGoToExtraction} className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/20"> <VisibilityIcon /> Voir l'extraction </button>
-              <button onClick={handleStayOnImage} className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2 border border-slate-700"> <DescriptionIcon /> Rester sur l'image </button>
+              <button
+                onClick={handleGoToExtraction}
+                className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/20"
+              >
+                {" "}
+                <VisibilityIcon /> Voir l'extraction{" "}
+              </button>
+              <button
+                onClick={handleStayOnImage}
+                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2 border border-slate-700"
+              >
+                {" "}
+                <DescriptionIcon /> Rester sur l'image{" "}
+              </button>
             </div>
           </div>
         </div>
@@ -1482,7 +1753,10 @@ export default function Viewer() {
         <div className="w-[450px] bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl z-20 animate-in slide-in-from-right duration-300">
           <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-950">
             <div>
-              <h2 className="text-xl font-bold text-white"> Analyse Pathologique </h2>
+              <h2 className="text-xl font-bold text-white">
+                {" "}
+                Analyse Pathologique{" "}
+              </h2>
               <div className="text-xs text-slate-400">Dossier: {folderId}</div>
             </div>
           </div>
@@ -1500,16 +1774,35 @@ export default function Viewer() {
             )}
 
             <div className="mb-6 pb-4 border-b border-slate-800">
-              <label className="block text-xs font-bold text-emerald-400 uppercase tracking-widest mb-2 ml-1"> Nom de l'extraction </label>
-              <input type="text" value={labelInput} onChange={(e) => setLabelInput(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white font-bold text-emerald-300 focus:outline-none focus:border-emerald-500 transition-colors" />
+              <label className="block text-xs font-bold text-emerald-400 uppercase tracking-widest mb-2 ml-1">
+                {" "}
+                Nom de l'extraction{" "}
+              </label>
+              <input
+                type="text"
+                value={labelInput}
+                onChange={(e) => setLabelInput(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white font-bold text-emerald-300 focus:outline-none focus:border-emerald-500 transition-colors"
+              />
             </div>
 
             {renderOlgaForm()}
           </div>
 
           <div className="p-6 border-t border-slate-800 bg-slate-950 flex gap-3">
-            <button onClick={handleSaveAction} disabled={loading} className="flex-1 py-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold hover:shadow-lg hover:shadow-emerald-500/20 transition-all flex justify-center items-center gap-2">
-              {loading ? "Sauvegarde..." : <><CheckCircleIcon /> {isAnnotationMode ? "Mettre à jour" : "Créer l'extraction"}</>}
+            <button
+              onClick={handleSaveAction}
+              disabled={loading}
+              className="flex-1 py-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold hover:shadow-lg hover:shadow-emerald-500/20 transition-all flex justify-center items-center gap-2"
+            >
+              {loading ? (
+                "Sauvegarde..."
+              ) : (
+                <>
+                  <CheckCircleIcon />{" "}
+                  {isAnnotationMode ? "Mettre à jour" : "Créer l'extraction"}
+                </>
+              )}
             </button>
           </div>
         </div>
