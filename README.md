@@ -83,8 +83,21 @@ L'innovation principale de WiGo réside dans sa gestion des fichiers lourds. Le 
 
 ### Prérequis
 
-* Docker & Docker Compose installés.
-* Un fichier de biopsie nommé **`CMU-1.svs`** placé à la racine du dossier `backend/` (ou disponible dans votre bucket MinIO configuré).
+* **Docker & Docker Compose :** Assurez-vous que Docker Desktop est installé et en cours d'exécution. Téléchargez-le depuis [docker.com](https://www.docker.com/products/docker-desktop) si nécessaire.
+* **Fichiers de biopsie :** Un fichier de biopsie nommé **`CMU-1.svs`** doit être placé dans le dossier `backend/` (ou configuré dans votre bucket MinIO). Pour la démo, des fichiers exemples sont inclus.
+* **Ressources système :** Au moins 8GB RAM et 10GB d'espace disque libre pour la conversion d'images.
+* **Navigateur web :** Chrome, Firefox ou Edge pour une compatibilité optimale avec OpenSeadragon.
+
+### Configuration
+
+Avant de lancer le projet, vérifiez les fichiers de configuration :
+
+* **`docker-compose.yml` :** Définit les services (backend, frontend, db, minio). Modifiez les ports si nécessaire (par défaut : 8000 pour backend, 5173 pour frontend, 5432 pour PostgreSQL, 9000/9001 pour MinIO).
+* **Variables d'environnement :** Dans `docker-compose.yml`, ajustez les variables comme `POSTGRES_PASSWORD`, `MINIO_ACCESS_KEY`, etc., pour la sécurité en production.
+* **Backend :** Le fichier `backend/main.py` contient les routes API. Pour le développement, vous pouvez modifier les endpoints ou ajouter de nouvelles fonctionnalités.
+* **Frontend :** Le fichier `frontend/vite.config.ts` configure le proxy pour l'API backend.
+
+Pour une configuration avancée, consultez la documentation de chaque service (FastAPI, React, PostgreSQL, MinIO).
 
 ### 1. Lancement
 
@@ -107,6 +120,29 @@ Pour peupler la base de données avec des médecins et des patients fictifs :
 * **Backend (Docs) :** [http://localhost:8000/docs](https://www.google.com/search?q=http://localhost:8000/docs)
 * **MinIO (Console) :** [http://localhost:9001](https://www.google.com/search?q=http://localhost:9001)
 
+### Développement Local
+
+Si vous souhaitez développer sans Docker ou personnaliser le code :
+
+1. **Backend (Python) :**
+   - Installez Python 3.10+.
+   - Créez un environnement virtuel : `python -m venv backend/.venv`
+   - Activez-le : `backend\.venv\Scripts\activate` (Windows) ou `source backend/.venv/bin/activate` (Linux/Mac)
+   - Installez les dépendances : `pip install -r backend/requirements.txt`
+   - Lancez le serveur : `uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000`
+
+2. **Frontend (React) :**
+   - Installez Node.js 18+ et npm.
+   - Installez les dépendances : `cd frontend && npm install`
+   - Lancez le serveur de développement : `npm run dev`
+   - L'app sera accessible sur [http://localhost:5173](http://localhost:5173)
+
+3. **Base de données :** Utilisez PostgreSQL local ou un conteneur séparé. Configurez la connexion dans `backend/main.py`.
+
+4. **MinIO :** Lancez un serveur MinIO local ou utilisez un bucket cloud. Configurez les credentials dans le code.
+
+Pour déboguer, consultez les logs des conteneurs avec `docker compose logs -f [service]`.
+
 ---
 
 ## 📖 Guide du Médecin (Démo)
@@ -126,7 +162,18 @@ Pour peupler la base de données avec des médecins et des patients fictifs :
 * Ouvrez le même dossier. Vous verrez les annotations du Dr. House en **Orange** (Lecture seule).
 * Ajoutez une annotation par-dessus : elle sera en **Vert** (Votre propriété).
 
+### APIs Principales
 
+WiGo expose une API REST via FastAPI. Voici les endpoints clés :
+
+* **GET /patients** : Liste tous les patients.
+* **GET /patients/{id}** : Détails d'un patient spécifique.
+* **POST /extractions** : Crée une nouvelle extraction/annotation.
+* **GET /extractions/{patient_id}** : Liste les extractions pour un patient.
+* **POST /seed** : Initialise la base de données avec des données fictives.
+* **GET /dzi/{filename}** : Sert les fichiers DZI pour la visualisation.
+
+Consultez la documentation complète sur [http://localhost:8000/docs](http://localhost:8000/docs) après lancement.
 
 ---
 
@@ -152,5 +199,63 @@ Projet6/
 ```
 
 ---
+
+## 🔧 Troubleshooting
+
+### Problèmes Courants
+
+* **Erreur de build Docker :** Assurez-vous que Docker Desktop est en cours d'exécution et que vous avez suffisamment d'espace disque. Essayez `docker system prune` pour nettoyer.
+* **Port déjà utilisé :** Modifiez les ports dans `docker-compose.yml` si 8000, 5173, etc., sont occupés.
+* **Fichier SVS manquant :** Placez `CMU-1.svs` dans `backend/`. Pour tester, utilisez les fichiers exemples fournis.
+* **Conversion DZI échoue :** Vérifiez les logs avec `docker compose logs backend`. Assurez-vous que PyVips est installé dans le conteneur.
+* **Annotations non sauvegardées :** Vérifiez la connexion à PostgreSQL. Les données sont persistées dans un volume Docker.
+* **Performance lente :** La conversion initiale peut prendre du temps. Pour les gros fichiers, augmentez la RAM allouée à Docker.
+
+### Logs et Debugging
+
+* **Logs des conteneurs :** `docker compose logs [service]` (ex: `docker compose logs backend`)
+* **Accès au conteneur :** `docker compose exec backend bash`
+* **Redémarrage :** `docker compose restart`
+
+---
+
+## 🔒 Sécurité et Conformité
+
+**⚠️ Important :** WiGo est une plateforme de démonstration technique. Elle n'est pas destinée à un usage médical réel sans validation réglementaire.
+
+* **Confidentialité :** Les données médicales sont sensibles. En production, chiffrez les communications (HTTPS) et stockez les données de manière sécurisée.
+* **RGPD/Conformité :** Implémentez l'anonymisation des données et le consentement des patients.
+* **Authentification :** Actuellement simplifiée pour la démo. En production, utilisez OAuth2, JWT sécurisés, ou intégration LDAP.
+* **Audit :** Les annotations sont traçables par auteur, mais ajoutez des logs d'audit complets.
+* **Sauvegarde :** Configurez des sauvegardes régulières pour PostgreSQL et MinIO.
+
+Pour une implémentation en production, consultez les normes HIPAA, RGPD, ou équivalents locaux.
+
+---
+
+## 🤝 Contribution
+
+Nous accueillons les contributions ! Pour participer :
+
+1. **Fork** le repository.
+2. **Clone** votre fork : `git clone https://github.com/votre-username/Projet6.git`
+3. **Créez une branche** : `git checkout -b feature/nouvelle-fonctionnalite`
+4. **Développez** et testez vos changements.
+5. **Commit** : `git commit -m "Ajout de [description]"`
+6. **Push** : `git push origin feature/nouvelle-fonctionnalite`
+7. **Pull Request** : Ouvrez une PR avec une description détaillée.
+
+### Guidelines
+
+* Suivez les conventions de code (PEP8 pour Python, ESLint pour JS/TS).
+* Ajoutez des tests pour les nouvelles fonctionnalités.
+* Mettez à jour la documentation si nécessaire.
+* Respectez la sécurité des données médicales.
+
+---
+
+## 📄 Licence
+
+Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
 
 **WiGo** - *Plateforme de démonstration technique pour l'analyse de biopsies.*
