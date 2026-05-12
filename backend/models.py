@@ -29,7 +29,7 @@ class RadiologyStudy(Base):
     date = Column(String)
     
     report = Column(Text, nullable=True)
-    
+    annotations = Column(Text, nullable=True)
     patient = relationship("Patient", back_populates="radiology_studies")
 
 class Biopsy(Base):

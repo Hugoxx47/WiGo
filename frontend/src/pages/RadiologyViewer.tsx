@@ -1,13 +1,39 @@
 import { useNavigate, useLocation } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import SaveIcon from "@mui/icons-material/Save";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
+import InfoIcon from "@mui/icons-material/Info";
+
+// --- IMPORTATION DU MOTEUR CORNERSTONE (Natif) ---
+import cornerstone from "cornerstone-core";
+import cornerstoneMath from "cornerstone-math";
+import cornerstoneTools from "cornerstone-tools";
+import dicomParser from "dicom-parser";
+import cornerstoneWADOImageLoader from "cornerstone-wado-image-loader";
+import Hammer from "hammerjs";
+
+// Initialisation globale
+let isCornerstoneInitialized = false;
+const initCornerstone = () => {
+  if (isCornerstoneInitialized) return;
+
+  cornerstoneTools.external.cornerstone = cornerstone;
+  cornerstoneTools.external.Hammer = Hammer;
+  cornerstoneTools.external.cornerstoneMath = cornerstoneMath;
+
+  cornerstoneWADOImageLoader.external.cornerstone = cornerstone;
+  cornerstoneWADOImageLoader.external.dicomParser = dicomParser;
+
+  cornerstoneWADOImageLoader.configure({ useWebWorkers: false });
+  cornerstoneTools.init();
+
+  isCornerstoneInitialized = true;
+};
 
 export default function RadiologyViewer() {
   const navigate = useNavigate();
   const location = useLocation();
-
   const searchParams = new URLSearchParams(location.search);
   const patientId = searchParams.get("patient") || "Inconnu";
   const studyId = searchParams.get("study");
@@ -15,35 +41,97 @@ export default function RadiologyViewer() {
   const [report, setReport] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // L'URL qui auto-charge l'image
-  const ORTHANC_VIEWER_URL = studyId
-    ? `http://localhost:8042/stone-webviewer/index.html?study=${studyId}`
-    : "http://localhost:8042/stone-webviewer/index.html";
+  const viewerRef = useRef<HTMLDivElement>(null);
 
-  // Charger le compte-rendu existant depuis PostgreSQL
+  // CHARGEMENT DE L'IMAGE ET DES ANNOTATIONS
   useEffect(() => {
-    if (studyId) {
-      fetch(`http://localhost:8000/radiology/${studyId}/report`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.report) setReport(data.report);
-        })
-        .catch((err) => console.error("Erreur de chargement du rapport", err));
-    }
+    if (!studyId || !viewerRef.current) return;
+    initCornerstone();
+
+    const loadDataAndDicom = async () => {
+      try {
+        // 1. Récupérer le texte et les annotations depuis PostgreSQL
+        const dbRes = await fetch(
+          `http://localhost:8000/radiology/${studyId}/report`,
+        );
+        const dbData = await dbRes.json();
+        if (dbData.report) setReport(dbData.report);
+
+        // 2. Demander à Orthanc les images de l'étude (Simple GET infaillible !)
+        const response = await fetch(`/orthanc/studies/${studyId}/instances`);
+        if (!response.ok) throw new Error("Erreur de connexion API Orthanc");
+
+        const instances = await response.json();
+        if (!instances || instances.length === 0)
+          throw new Error("Aucune image trouvée.");
+
+        // 3. Construire l'URL DICOM avec le champ "ID"
+        const firstInstanceId = instances[0].ID;
+        const dicomUrl = `wadouri:${window.location.origin}/orthanc/instances/${firstInstanceId}/file`;
+
+        // 4. Dessiner l'image dans le Canvas
+        cornerstone.enable(viewerRef.current!);
+        const image = await cornerstone.loadImage(dicomUrl);
+        cornerstone.displayImage(viewerRef.current!, image);
+
+        // 5. Activer les outils
+        const WwwcTool = cornerstoneTools.WwwcTool;
+        const ZoomTool = cornerstoneTools.ZoomTool;
+        const PanTool = cornerstoneTools.PanTool;
+        const LengthTool = cornerstoneTools.LengthTool;
+
+        cornerstoneTools.addTool(WwwcTool);
+        cornerstoneTools.addTool(ZoomTool);
+        cornerstoneTools.addTool(PanTool);
+        cornerstoneTools.addTool(LengthTool);
+
+        cornerstoneTools.setToolActive("Wwwc", { mouseButtonMask: 1 });
+        cornerstoneTools.setToolActive("Zoom", { mouseButtonMask: 2 });
+        cornerstoneTools.setToolActive("Length", { mouseButtonMask: 4 });
+
+        // 6. Réinjecter les dessins s'ils existent en base
+        if (dbData.annotations) {
+          const parsedState = JSON.parse(dbData.annotations);
+          cornerstoneTools.globalImageIdSpecificToolStateManager.restoreState(
+            parsedState,
+          );
+        }
+
+        setIsLoading(false);
+      } catch (error) {
+        console.error("Erreur de chargement :", error);
+        setIsLoading(false);
+      }
+    };
+
+    loadDataAndDicom();
+
+    return () => {
+      if (viewerRef.current) cornerstone.disable(viewerRef.current);
+    };
   }, [studyId]);
 
-  // Sauvegarder le compte-rendu
+  // SAUVEGARDE DE TOUT (Texte + Dessins)
   const handleSaveReport = async () => {
     if (!studyId) return;
     setIsSaving(true);
     try {
+      // 🌟 Extraction des dessins Cornerstone en JSON
+      const toolState =
+        cornerstoneTools.globalImageIdSpecificToolStateManager.saveState();
+      const annotationsStr = JSON.stringify(toolState);
+
       const res = await fetch(
         `http://localhost:8000/radiology/${studyId}/report`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ report: report }),
+          body: JSON.stringify({
+            report: report,
+            annotations: annotationsStr, // On envoie le JSON des traits à FastAPI
+          }),
         },
       );
       if (res.ok) {
@@ -59,7 +147,6 @@ export default function RadiologyViewer() {
 
   return (
     <div className="h-screen w-screen bg-black flex flex-col font-sans text-white overflow-hidden">
-      {/* HEADER */}
       <div className="bg-slate-950 border-b border-slate-800 p-3 flex justify-between items-center z-10 shadow-xl">
         <div className="flex items-center gap-4">
           <button
@@ -70,94 +157,65 @@ export default function RadiologyViewer() {
           </button>
           <div>
             <h1 className="font-bold text-white flex items-center gap-2">
-              DPI - Imagerie Radiologique (DICOM)
+              DPI - Imagerie Radiologique
             </h1>
             <p className="text-xs text-cyan-500 font-mono">
-              Patient ID: {patientId} | Source: Serveur PACS Orthanc
+              Patient ID: {patientId}
             </p>
           </div>
+        </div>
+        <div className="flex gap-2 items-center text-sm text-cyan-400 bg-cyan-900/30 px-4 py-2 rounded-lg border border-cyan-800/50">
+          <InfoIcon fontSize="small" />
+          Clic G: Contraste | Clic Droit: Zoom | Molette: Tracer une Mesure
         </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* ZONE DE RENDU I-FRAME (La Radio auto-chargée) */}
-        <div className="flex-1 relative bg-black">
-          {studyId ? (
-            <iframe
-              src={ORTHANC_VIEWER_URL}
-              className="w-full h-full border-none"
-              title="Orthanc Stone Viewer"
-              allowFullScreen
-            />
-          ) : (
-            <div className="flex items-center justify-center h-full text-slate-500">
-              Aucun examen radiologique trouvé pour ce patient.
+        {/* LE VISUALISEUR NATIF */}
+        <div className="flex-1 relative bg-black flex items-center justify-center">
+          {isLoading && (
+            <div className="absolute text-slate-400 font-mono animate-pulse">
+              Décodage des pixels DICOM...
             </div>
           )}
+          <div
+            ref={viewerRef}
+            className="w-full h-full"
+            onContextMenu={(e) => e.preventDefault()}
+          />
         </div>
 
-        {/* LE PANNEAU DE COMPTE-RENDU (Sauvegardé en BDD) */}
-        <div className="w-[400px] bg-slate-900 border-l border-slate-800 flex flex-col p-4 shadow-2xl z-10">
+        {/* PANNEAU DE SAUVEGARDE */}
+        <div className="w-[400px] bg-slate-900 border-l border-slate-800 flex flex-col p-5 shadow-2xl z-10">
           <div className="flex justify-between items-start mb-4 border-b border-slate-700 pb-4">
             <div>
               <h2 className="text-lg font-bold text-white">Compte-Rendu</h2>
               <p className="text-xs text-slate-400 mt-1">Examen radiologique</p>
-            </div>
-            {/* Petits tags de contexte médical */}
-            <div className="flex flex-col gap-1 items-end">
-              <span className="px-2 py-1 bg-indigo-900/50 text-indigo-300 text-[10px] font-bold rounded uppercase tracking-wider border border-indigo-700/50">
-                DICOM Validé
-              </span>
-              <span className="px-2 py-1 bg-slate-800 text-slate-400 text-[10px] font-mono rounded border border-slate-700">
-                PACS: Connecté
-              </span>
             </div>
           </div>
 
           <textarea
             value={report}
             onChange={(e) => setReport(e.target.value)}
-            placeholder="Ex: Présence d'une masse de 12mm dans le lobe supérieur..."
-            className="flex-1 w-full bg-slate-800 border border-slate-700 rounded-xl p-4 text-sm text-slate-200 focus:outline-none focus:border-cyan-500 resize-none custom-scrollbar shadow-inner"
+            placeholder="Ex: Présence d'une masse..."
+            className="flex-1 w-full bg-slate-800/80 border border-slate-700 rounded-xl p-4 text-sm text-slate-200 focus:outline-none focus:border-cyan-500 resize-none custom-scrollbar shadow-inner leading-relaxed"
           />
 
-          <div className="flex flex-col gap-2 mt-4">
-            <button
-              onClick={handleSaveReport}
-              disabled={isSaving}
-              className={`py-3 rounded-xl font-bold flex justify-center items-center gap-2 transition-all shadow-lg ${saved ? "bg-emerald-600 text-white" : "bg-cyan-600 hover:bg-cyan-500 text-white shadow-cyan-900/50"}`}
-            >
-              {saved ? (
-                <>
-                  <CheckCircleIcon fontSize="small" /> Enregistré au dossier
-                </>
-              ) : isSaving ? (
-                "Sauvegarde..."
-              ) : (
-                <>
-                  <SaveIcon fontSize="small" /> Sauvegarder
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => {
-                const element = document.createElement("a");
-                const file = new Blob(
-                  [
-                    `COMPTE RENDU RADIOLOGIQUE\nPatient ID: ${patientId}\n\n${report}`,
-                  ],
-                  { type: "text/plain" },
-                );
-                element.href = URL.createObjectURL(file);
-                element.download = `CR_Radiologie_${patientId}.txt`;
-                document.body.appendChild(element);
-                element.click();
-              }}
-              className="py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-sm font-medium transition-colors border border-slate-700 flex justify-center items-center gap-2"
-            >
-              Exporter le texte (.txt)
-            </button>
-          </div>
+          <button
+            onClick={handleSaveReport}
+            disabled={isSaving}
+            className={`mt-4 py-3 rounded-xl font-bold flex justify-center items-center gap-2 transition-all shadow-lg ${saved ? "bg-emerald-600 text-white" : "bg-cyan-600 hover:bg-cyan-500 text-white shadow-cyan-900/50"}`}
+          >
+            {saved ? (
+              <>
+                <CheckCircleIcon fontSize="small" /> Mesures & Texte Enregistrés
+              </>
+            ) : (
+              <>
+                <SaveIcon fontSize="small" /> Sauvegarder
+              </>
+            )}
+          </button>
         </div>
       </div>
     </div>

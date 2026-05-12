@@ -9,6 +9,14 @@ export default defineConfig({
     port: 5173,
     watch: {
       usePolling: true
-    }
+    },
+    proxy: {
+      '/orthanc': {
+        target: 'http://p6_orthanc:8042', 
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/orthanc/, '')
+      }
+    },
   },
 })

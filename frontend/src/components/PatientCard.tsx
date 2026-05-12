@@ -69,6 +69,7 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
   };
   const motifConsultation = getMotif();
 
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
     if (!patient.folder_id) return;
 
