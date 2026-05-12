@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Dashboard from './pages/Dashboard';
 import Viewer from './pages/Viewer';
 import Login from './pages/Login';
+import RadiologyViewer from './pages/RadiologyViewer';
 
 // Pour la démo, on simule que l'utilisateur est connecté
 const isAuthenticated = true;
@@ -14,6 +15,7 @@ function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/dashboard" element={isAuthenticated ? <Dashboard /> : <Navigate to="/login" />} />
           <Route path="/viewer" element={isAuthenticated ? <Viewer /> : <Navigate to="/login" />}/>
+          <Route path="/radiology" element={isAuthenticated ? <RadiologyViewer /> : <Navigate to="/login" />}/>
           <Route path="*" element={<Navigate to="/dashboard" />} />
         </Routes>
       </Router>

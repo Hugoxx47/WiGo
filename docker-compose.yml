@@ -16,7 +16,7 @@ services:
     networks:
       - app_network
 
-  # --- Object Storage (MinIO) ---
+  # --- Object Storage Imagerie (MinIO) ---
   minio:
       image: minio/minio
       container_name: p6_minio
@@ -34,6 +34,20 @@ services:
         app_network:
           aliases:
             - minio
+
+# --- PACS Radiologie (Orthanc) ---
+  orthanc:
+    image: jodogne/orthanc-plugins:1.12.0
+    container_name: p6_orthanc
+    ports:
+      - "8042:8042"
+      - "4242:4242"
+    environment:
+      - ORTHANC_NAME=Wigo PACS Radiologie
+    volumes:
+      - orthanc_data:/var/lib/orthanc/db
+    networks:
+      - app_network
 
   # --- Backend (Python/FastAPI) ---
   backend:
@@ -91,6 +105,7 @@ services:
 volumes:
   postgres_data:
   minio_data:
+  orthanc_data:
 
 networks:
   app_network:

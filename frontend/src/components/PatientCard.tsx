@@ -16,6 +16,12 @@ interface Biopsy {
   date?: string; 
 }
 
+interface RadiologyStudy {
+  id: number;
+  modality: string;
+  description: string;
+}
+
 interface Patient {
   id: number;
   name: string;
@@ -23,6 +29,7 @@ interface Patient {
   folder_id: string;
   birth_date?: string;
   biopsies: Biopsy[];
+  radiology_studies?: RadiologyStudy[];
   motif?: string;
 }
 
@@ -169,13 +176,23 @@ const PatientCard = ({ patient }: { patient: Patient }) => {
 
       {/* ACTIONS */}
       <div className="flex gap-3 mt-auto">
-        <button onClick={() => mainBiopsyUrl && openViewer()} className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors">
-            <VisibilityIcon fontSize="small"/> Nouvelle
+        <button onClick={() => mainBiopsyUrl && openViewer()} className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors border border-slate-700 shadow-lg">
+            <VisibilityIcon fontSize="small"/> Biopsie
         </button>
+
+        {/* 🌟 CORRECTION : Le bouton passe maintenant l'ID Orthanc dans l'URL ! */}
+        {patient.radiology_studies && patient.radiology_studies.length > 0 && (
+            <button 
+              onClick={() => navigate(`/radiology?patient=${patient.folder_id}&study=${patient.radiology_studies![0].orthanc_study_id}`)} 
+              className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-colors border border-slate-700 shadow-lg"
+            >
+                Radio
+            </button>
+        )}
         
         {hasExtractions && (
             <button onClick={handleAnnotateClick} className="flex-1 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-cyan-900/20">
-                <EditIcon fontSize="small"/> Ouvrir
+                <EditIcon fontSize="small"/> Dossiers
             </button>
         )}
       </div>

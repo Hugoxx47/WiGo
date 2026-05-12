@@ -63,6 +63,15 @@ class BiopsySchema(BaseModel):
     class Config:
         from_attributes = True
 
+class RadiologySchema(BaseModel):
+    id: int
+    orthanc_study_id: str
+    modality: str
+    description: str
+    date: str
+    class Config:
+        from_attributes = True
+
 class PatientSchema(BaseModel):
     id: int
     name: str
@@ -72,6 +81,7 @@ class PatientSchema(BaseModel):
     family_history: Optional[str] = None
     medical_history: Optional[str] = None
     biopsies: List[BiopsySchema] = []
+    radiology_studies: List[RadiologySchema] = []
     class Config:
         from_attributes = True
 
@@ -120,6 +130,10 @@ class AnalysisPayload(BaseModel):
     drawings: List[DrawingSchema] = []
 
 
+# --- SCHEMAS POUR LE RAPPORT ---
+class ReportPayload(BaseModel):
+    report: str
+
 # --- CREATION DES 3 PATIENTS ---
 @app.post("/seed")
 def seed_database(db: Session = Depends(database.get_db)):
@@ -131,17 +145,23 @@ def seed_database(db: Session = Depends(database.get_db)):
             {
                 "name": "Jean Dupont", "age": 65, "folder": "CMU-1", 
                 "birth": "1958-05-12", "family": "Non", "med": "Hypertension",
-                "dzi_filename": "biopsie_cmu_1.dzi"
+                "dzi_filename": "biopsie_cmu_1.dzi",
+                "orthanc_id": "1.2.826.0.1.3680043.8.1055.1.20111103112244831.40200514.30965937",
+                "modality": "CT", "desc": "Scanner Thoracique Complet"
             },
             {
                 "name": "Marie Curie", "age": 58, "folder": "CASE-InstanSeg-HE", 
                 "birth": "1965-11-07", "family": "Oui", "med": "Suivi annuel",
-                "dzi_filename": "biopsie_cmu_2.dzi"
+                "dzi_filename": "biopsie_cmu_2.dzi",
+                "orthanc_id": "1.3.12.2.1107.5.4.3.123456789012345.19950922.121803.6",
+                "modality": "MR", "desc": "IRM Mammaire Bilatérale"
             },
             {
-                "name": "Paul Martin", "age": 42, "folder": "CMU-2",  # 🌟 Changé !
+                "name": "Paul Martin", "age": 42, "folder": "CMU-2",  
                 "birth": "1982-02-23", "family": "Non", "med": "RAS",
-                "dzi_filename": "biopsie_cmu_3.dzi" # 🌟 Le nouveau nom !
+                "dzi_filename": "biopsie_cmu_3.dzi",
+                "orthanc_id": "1.3.6.1.4.1.44316.6.102.1.20250704114423696.61158672119535771932",
+                "modality": "CR", "desc": "Radiographie Standard"
             }
         ]
         
@@ -157,13 +177,39 @@ def seed_database(db: Session = Depends(database.get_db)):
             
             biopsy = models.Biopsy(patient_id=patient.id, image_url=p["dzi_filename"], status="Non analysé")
             db.add(biopsy)
+            
+            radio = models.RadiologyStudy(
+                patient_id=patient.id, 
+                orthanc_study_id=p["orthanc_id"], 
+                modality=p["modality"], 
+                description=p["desc"], 
+                date="2026-04-10"
+            )
+            db.add(radio)
             count += 1
             
         db.commit()
-        return {"message": f"Succès ! BDD Réinitialisée avec {count} patients."}
+        return {"message": f"Succès ! BDD Réinitialisée."}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+# COMPTE-RENDU RADIOLOGIQUE
+@app.get("/radiology/{study_id}/report")
+def get_radiology_report(study_id: str, db: Session = Depends(database.get_db)):
+    radio = db.query(models.RadiologyStudy).filter(models.RadiologyStudy.orthanc_study_id == study_id).first()
+    if not radio:
+        raise HTTPException(status_code=404, detail="Radio introuvable")
+    return {"report": radio.report or ""}
+
+@app.post("/radiology/{study_id}/report")
+def save_radiology_report(study_id: str, payload: ReportPayload, db: Session = Depends(database.get_db)):
+    radio = db.query(models.RadiologyStudy).filter(models.RadiologyStudy.orthanc_study_id == study_id).first()
+    if not radio:
+        raise HTTPException(status_code=404, detail="Radio introuvable")
+    radio.report = payload.report
+    db.commit()
+    return {"message": "Compte-rendu sauvegardé !"}
 
 # --- ROUTE HEALTH CHECK ---
 @app.get("/health")

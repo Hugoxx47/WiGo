@@ -16,6 +16,21 @@ class Patient(Base):
 
     biopsies = relationship("Biopsy", back_populates="patient", cascade="all, delete")
     extractions = relationship("Extraction", back_populates="patient", cascade="all, delete")
+    radiology_studies = relationship("RadiologyStudy", back_populates="patient", cascade="all, delete")
+
+class RadiologyStudy(Base):
+    __tablename__ = "radiology_studies"
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"))
+    
+    orthanc_study_id = Column(String)
+    modality = Column(String)   
+    description = Column(String) 
+    date = Column(String)
+    
+    report = Column(Text, nullable=True)
+    
+    patient = relationship("Patient", back_populates="radiology_studies")
 
 class Biopsy(Base):
     __tablename__ = "biopsies"
